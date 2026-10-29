@@ -1,0 +1,62 @@
+FOLHA DE PAGAMENTO - REVISA
+Versão 3.9 | Windows | Python + Tkinter + SQLite
+
+CONTEÚDO
+- folha_pagamento.py: aplicativo de folha de pagamento.
+- logo_revisa.png: logo exibida na tela de acesso.
+- FolhaPagamentoRevisa_1_130.exe: aplicativo compilado para Windows.
+- folha_pagamento.db: banco inicial com histórico mensal importado da aba 2026 da planilha.
+- importar_planilha.py: utilitário para consultar a estrutura da planilha e gerar um relatório de importação, sem alterar a origem.
+
+COMO INICIAR
+1. Extraia a pasta FolhaPagamentoRevisa em um local fixo, por exemplo:
+   pasta do aplicativo, onde está o arquivo “folha_pagamento.py”
+2. Para usar o aplicativo compilado, abra Iniciar_Folha_Pagamento.bat ou FolhaPagamentoRevisa_1_130.exe.
+3. Na primeira abertura, crie uma senha com pelo menos 8 caracteres. Nas próximas aberturas, informe essa senha.
+   Na folha mensal, o botão “DP - Antares” abre a seleção de PDFs na pasta “C:\Users\Revisa\Documents\CONTROLE FINANCEIRO\RECURSOS HUMANOS\FOLHA DE PGTO”. Ele importa valores líquidos de um PDF contábil com texto extraível, após conferência dos colaboradores e valores identificados. PDFs digitalizados precisam de OCR externo.
+   O relatório PDF da folha mensal reúne proventos e descontos em uma única tabela horizontal, em formato paisagem. Se necessário, a tabela continua em páginas seguintes com o cabeçalho repetido. O relatório anual de todos os colaboradores também usa paisagem para acomodar os valores mensais.
+4. Use o menu lateral para acessar Painel, Folha mensal, Colaboradores, Salários e Empréstimos. O botão Backup fica uma única vez na barra lateral e oferece opções para criar a cópia na pasta padrão, salvar em outro local ou abrir a pasta de backups. O crédito “Desenvolvido por Jorge Alberto de Paula” aparece centralizado e em duas linhas na área azul. O Painel acompanha o ano e a competência selecionados e mostra colaboradores ativos, total líquido e colaboradores lançados na competência, além da quantidade de folhas em revisão no ano. Dois gráficos maiores comparam o total líquido e os colaboradores lançados ao longo dos 12 meses; meses sem folha aparecem zerados. Na tela Salários, digite manualmente o salário anterior. Cada reajuste salvo em “Salário / reajustes da folha” cria uma coluna identificada como “Reajuste” e o mês/ano; se já houver reajuste do colaborador nesse mês, o valor é atualizado. Informe o mês/ano no formato MM/AAAA; a data de vigência na folha continua sendo informada separadamente. Na parte inferior, selecione o colaborador e o reajuste para consultar ou editar o mês/ano e a observação sobre o motivo do aumento. Use “Relatório de reajustes (PDF)” para imprimir ou salvar os reajustes, com colaborador, mês/ano, salário e observação. Esses valores e observações são apenas para consulta e não alteram folhas já lançadas. Na tela Folha mensal, linhas amarelas indicam salário não informado ou observação para conferência; folhas fechadas ficam verdes. Escolha o período pelo seletor de ano e mês ou use as setas para navegar mês a mês. Use “Gerar relatório PDF” para abrir a folha completa em PDF, com os lançamentos de cada colaborador e o total geral a pagar em destaque; use “Salvar como” no leitor de PDF para guardar uma cópia.
+Na tela Colaboradores, use “Relatório de colaboradores para impressão” e escolha um colaborador ou todos. O PDF abre no leitor padrão; use “Salvar como” para guardar uma cópia.
+   Na tela Colaboradores, os cadastros ficam separados nas abas “Ativos” e “Inativos”; selecione a aba “Inativos” para consultar ou reativar um cadastro. As duas listas mostram Banco, Agência e Conta ao lado do PIX; use a barra de rolagem horizontal para consultar as colunas à direita.
+   Para registrar o salário-base usado em novas folhas, selecione o colaborador e use “Salário / reajustes”. Informe o salário e o mês/ano de vigência. Esse histórico é separado dos valores de controle manual da tela Salários; alterações não modificam folhas já lançadas.
+5. Todas as operações de empréstimos e adiantamentos ficam exclusivamente na aba Empréstimos. A lista exibe o valor total original, o saldo restante e as observações. Use “Cadastrar empréstimo / adiantamento” para registrar um contrato. Selecione um lançamento e use “Quitar saldo” para lançar o saldo restante no desconto de empréstimo ou adiantamento da competência selecionada e encerrar as parcelas futuras. A quitação preserva salário e os demais valores do colaborador na folha; se a folha estiver fechada, ela é atualizada e continua fechada. Contratos quitados ficam registrados e não podem ser excluídos. Use “Editar / excluir” (ou dê duplo clique na linha) para ajustar contratos ainda ativos ou salvar observações; ao alterar valor, quantidade, início ou tipo, as parcelas são reconciliadas com ajustes manuais anteriores. Use “Relatório Geral por Colaborador (PDF)” para consultar, de um colaborador ou de todos, o que falta pagar, o já pago e a lista das parcelas pendentes, com empréstimos e adiantamentos em tabelas separadas; é possível escolher “Somente um mês” para ver apenas o que vence naquele mês. Todo PDF aberto pelo sistema pergunta se você deseja assinar; ao escolher “Sim”, o PDF é assinado com o certificado digital (.pfx) e recebe um carimbo com a logo da Revisa no fim do relatório; ao escolher “Não”, abre normalmente, sem assinatura. A validade do certificado é exibida em vermelho no canto direito da barra de botões da Central Revisa, com aviso quando estiver a 30 dias do vencimento ou vencido. A senha é pedida uma vez a cada abertura do programa e não é gravada.
+6. Se preferir executar o código-fonte, tenha Python 3.11 ou superior instalado e abra o PowerShell nesta pasta:
+   py .\folha_pagamento.py
+7. Para gerar relatórios executando o código-fonte, instale as dependências com:
+   py -m pip install -r requirements.txt
+8. O aplicativo cria a base de trabalho em %LOCALAPPDATA%\FolhaPagamentoRevisa\folha_pagamento.db na primeira execução.
+   A base distribuída nesta pasta será copiada para esse local apenas na primeira execução.
+   Os dados ficam armazenados localmente neste computador; mantenha backups atualizados para proteção contra perda de arquivos.
+9. O aplicativo cria automaticamente uma cópia chamada “backup_folha.db” na pasta “Backup Folha Revisa” dentro da pasta sincronizada do Mega, no máximo uma vez a cada 30 dias em que o programa é aberto. Quando uma nova cópia automática for criada, ela substitui a anterior; não são acumuladas cópias automáticas com data no nome. O primeiro backup automático é criado na próxima abertura; se o programa ficar fechado, será criado quando voltar a ser aberto. A pasta de backups manuais continua em %LOCALAPPDATA%\FolhaPagamentoRevisa\backups; use o botão “Backup” da barra lateral para criar cópias adicionais.
+
+REGRAS IMPORTANTES
+- O histórico importado de 2026 é preservado; não importamos anos anteriores nem a aba 2027.
+- A planilha Excel original não é modificada.
+- A tela não exibe o botão “Novo ano”.
+- A alteração de um lançamento mensal não altera os outros meses.
+- Após fechar uma folha, inclusão, edição e remoção de lançamentos ficam bloqueadas. A ação “Quitar saldo” é uma exceção controlada: altera somente o desconto correspondente e mantém a folha fechada. Para outras correções, use “Reabrir folha”.
+- As linhas da folha fechada aparecem em verde-claro; linhas que precisam de conferência continuam destacadas em amarelo.
+- Para cadastrar ou editar os dados de um colaborador, use a aba “Colaboradores”.
+- O botão “Excluir selecionado” remove cadastros sem vínculos; para preservar folhas, anos e empréstimos existentes, colaboradores com histórico devem ser inativados em vez de excluídos.
+- O cadastro permite informar manualmente um código único para cada colaborador; códigos antigos podem ser preenchidos ao editar o cadastro.
+- O cadastro também possui endereço, número, bairro, CEP, cidade, estado, CTPS, CPF e datas de nascimento, admissão e demissão. As datas devem ser digitadas como DD/MM/AAAA.
+- A lista de colaboradores mostra o salário base vigente, considerando a competência atual e o histórico de reajustes. A tela Salários mantém um controle manual separado, sem preencher o histórico nem alterar valores da folha.
+- As colunas das tabelas ajustam a largura conforme os cabeçalhos e os dados, limitadas para manter a tela utilizável; use a barra horizontal para ver colunas que ultrapassem a largura da janela.
+- O cadastro do colaborador permite guardar sua chave PIX.
+- No telefone do colaborador, informe o DDD em seu campo e o número no campo separado. A lista exibe o telefone formatado.
+- Foram preenchidos CPF, CTPS, nascimento e admissão para 10 colaboradores identificados no relatório fornecido. Correspondências ambíguas ou sem cadastro existente foram deixadas sem alteração; o PDF não traz endereço individual nem data de demissão, que devem ser informados manualmente.
+- O cadastro de colaboradores fica somente na aba “Colaboradores”; o botão “Incluir colaborador na folha” adiciona um colaborador já cadastrado ao mês selecionado.
+- A parcela do empréstimo pode ser alterada ou zerada ao editar o lançamento; o ajuste afeta somente a folha daquele mês.
+- Mensagens padrão criadas automaticamente nas observações das folhas são removidas na abertura do programa. Observações escritas manualmente não são apagadas.
+- A coluna “Empréstimo / Vale” mostra o número da parcela do empréstimo precedido por “Emp”; adiantamentos aparecem somente como “Vale”, sem número de parcela. Contratos de empréstimo múltiplos aparecem separados por “+”.
+- O programa não gera recibos individuais e não envia dados para a internet.
+- O PDF mensal apresenta os valores da folha por colaborador e destaca o total geral a pagar para conferência do pagamento.
+- No relatório de empréstimos, uma parcela é considerada paga somente quando consta em uma folha fechada. Alterações de parcelas e ajustes do contrato são considerados no cálculo.
+- Os totais do sistema seguem: salário + PF/adicional + hora extra + férias - marmitex - vales - farmácia - empréstimos - outros descontos.
+- Os dados importados devem ser conferidos, especialmente onde a planilha original tinha salários vazios ou fórmulas. A coluna “Total original planilha” é mantida no banco para comparação.
+
+SEGURANÇA E LIMITES
+- O banco é local neste computador. Não coloque o arquivo SQLite ativo em pasta sincronizada por múltiplos computadores; sincronização simultânea pode corromper ou conflitar dados.
+- Os backups automáticos são cópias separadas do banco ativo; mantenha a pasta de destino sincronizada no Mega e confirme que o cliente do Mega está funcionando para que as cópias sejam enviadas.
+- A senha é armazenada como hash protegido, mas a tela de senha não criptografa o arquivo do banco. Proteja também o acesso à conta do Windows e faça backups seguros.
+- Esta versão é um controle administrativo, não substitui a validação de um sistema oficial de folha/eSocial ou a revisão contábil/trabalhista.

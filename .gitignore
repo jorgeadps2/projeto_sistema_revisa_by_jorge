@@ -1,0 +1,55 @@
+# Dados locais e documentos dos sistemas
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.sqlite3-*
+*.pdf
+*.csv
+*.xlsx
+*.xlsm
+*.xls
+*.doc
+*.docx
+*.zip
+*.7z
+*.rar
+*backup*/
+*Backup*/
+
+# Credenciais, certificados e configuracoes de acesso
+*.pfx
+*.p12
+*.pem
+*.key
+*.cer
+*.crt
+*.json
+*senha*
+*Senha*
+*SENHA*
+.env
+.env.*
+!.env.example
+
+# Executaveis e arquivos gerados
+dist/
+build/
+__pycache__/
+*.py[cod]
+*.exe
+*.pkg
+*.pyz
+*.toc
+*.bak*
+*.log
+*.tmp
+inspect.txt
+
+# Ambiente e editor
+.venv/
+venv/
+.vscode/
+.idea/
+Thumbs.db
+Desktop.ini
