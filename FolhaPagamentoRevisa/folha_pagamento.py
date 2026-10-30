@@ -1620,7 +1620,9 @@ class FolhaBase:
         self._align_tab_actions(actions,payroll_table)
         payroll_style=ttk.Style(self)
         payroll_style.configure('Payroll.Treeview',foreground='#000000')
-        payroll_style.map('Payroll.Treeview',foreground=[('selected','#000000')])
+        payroll_style.map(
+            'Payroll.Treeview',foreground=[('selected','#000000')],
+            background=[('selected','#dbeafe')])
         self.pay_tree=ttk.Treeview(payroll_table,columns=columns,show='headings',selectmode='browse',style='Payroll.Treeview')
         heads={'name':'Colaborador','note_marker':'','salary':'Salário','pf':'PF / adicional','overtime':'Hora extra','vacation':'Férias','thirteenth':'13º salário','marmitex':'Marmitex','advances':'Adiantamento Salarial','pharmacy':'Farmácia','loan':'Empréstimo','loan_installment':'Empréstimo / Vale','total':'Total líquido'}
         widths={'name':175,'note_marker':26,'salary':100,'pf':95,'overtime':95,'vacation':95,'thirteenth':100,'marmitex':95,'advances':150,'pharmacy':95,'loan':100,'loan_installment':125,'total':115}
@@ -1628,7 +1630,7 @@ class FolhaBase:
             self.pay_tree.heading(c,text=heads[c]);self.pay_tree.column(c,width=widths[c],anchor='w' if c=='name' else 'center')
         self.pay_tree.column('note_marker',anchor='e',minwidth=26,stretch=False)
         payroll_scroll=ttk.Scrollbar(payroll_table,orient='horizontal',command=self.pay_tree.xview)
-        self.payroll_note_markers={}
+        self.payroll_cell_labels={}
         self.payroll_note_marker_refresh=None
 
         def on_horizontal_scroll(first,last):
@@ -1638,7 +1640,7 @@ class FolhaBase:
         self.pay_tree.configure(
             xscrollcommand=on_horizontal_scroll,
             yscrollcommand=lambda *_:self._schedule_payroll_note_markers())
-        for event in ('<Configure>','<Map>','<<TreeviewSelect>>'):
+        for event in ('<Configure>','<Map>','<<TreeviewSelect>>','<B1-Motion>','<ButtonRelease-1>'):
             self.pay_tree.bind(event,lambda _:self._schedule_payroll_note_markers(),add='+')
         self.pay_tree.bind('<Destroy>',self._cancel_payroll_note_markers,add='+')
         self.pay_tree.pack(fill='both',expand=True)
@@ -1694,35 +1696,46 @@ class FolhaBase:
         tree=self.pay_tree
         visible=set()
         selected=set(tree.selection())
+        credit_columns=('salary','pf','overtime','vacation','thirteenth','total')
+        debit_columns=('marmitex','advances','pharmacy','loan','loan_installment')
         for item in tree.get_children():
-            if not tree.set(item,'note_marker'):
+            if not tree.bbox(item):
                 continue
-            bounds=tree.bbox(item,'note_marker')
-            if not bounds:
-                continue
-            x,y,width,height=bounds
-            if x+width<=0 or x>=tree.winfo_width():
-                continue
-            visible.add(item)
-            if item not in self.payroll_note_markers:
-                # Treeview tags color whole rows, so draw only the marker separately.
-                label=tk.Label(tree,text='●',fg='#dc2626',font=('Segoe UI',9,'bold'),
-                               anchor='e',bd=0,padx=0,pady=0,takefocus=False)
-                label.bind('<Button-1>',lambda event,i=item:self._select_payroll_note_marker(i))
-                label.bind('<Double-1>',lambda event,i=item:self._select_payroll_note_marker(i,edit=True))
-                label.bind('<MouseWheel>',lambda event:tree.event_generate(
-                    '<MouseWheel>',delta=event.delta,state=event.state))
-                self.payroll_note_markers[item]=label
             background=(
                 ttk.Style(tree).lookup(tree['style'],'background',('selected',))
                 if item in selected else
                 tree.tag_configure(tree.item(item,'tags')[0],'background'))
-            label=self.payroll_note_markers[item]
-            label.configure(bg=background)
-            label.place(x=x,y=y,width=max(1,width-4),height=height)
-        for item in list(self.payroll_note_markers):
-            if item not in visible:
-                self.payroll_note_markers.pop(item).destroy()
+            for column in ('note_marker',)+credit_columns+debit_columns:
+                text=tree.set(item,column)
+                bounds=tree.bbox(item,column)
+                if not text or not bounds:
+                    continue
+                x,y,width,height=bounds
+                if x+width<=0 or x>=tree.winfo_width():
+                    continue
+                key=(item,column)
+                visible.add(key)
+                if key not in self.payroll_cell_labels:
+                    # Treeview tags color whole rows; overlay only colored cells.
+                    color=('#dc2626' if column=='note_marker' else
+                           '#15803d' if column in credit_columns else '#b91c1c')
+                    label=tk.Label(
+                        tree,fg=color,font=('Segoe UI',9,'bold'),
+                        anchor='e' if column=='note_marker' else 'center',
+                        bd=0,padx=0,pady=0,takefocus=False)
+                    label.bind('<Button-1>',lambda event,i=item:self._select_payroll_note_marker(i))
+                    label.bind('<Double-1>',lambda event,i=item:self._select_payroll_note_marker(i,edit=True))
+                    label.bind('<MouseWheel>',lambda event:tree.event_generate(
+                        '<MouseWheel>',delta=event.delta,state=event.state))
+                    self.payroll_cell_labels[key]=label
+                label=self.payroll_cell_labels[key]
+                label.configure(text=text,bg=background)
+                label.place(
+                    x=x,y=y,width=max(1,width-(4 if column=='note_marker' else 0)),
+                    height=height)
+        for key in list(self.payroll_cell_labels):
+            if key not in visible:
+                self.payroll_cell_labels.pop(key).destroy()
 
     def _select_payroll_note_marker(self,item,edit=False):
         self.pay_tree.selection_set(item)
@@ -2691,7 +2704,7 @@ class FolhaBase:
         self.autosize_treeview_columns(self.pay_tree,bold=True)
         self.pay_tree.column('note_marker',width=26)
         self.pay_summary.config(text=f'{MONTHS[month-1]} / {year}  •  {len(rows)} colaboradores  •  Total líquido: {brl(total)}  •  {p["status"]}')
-        self.pay_note.config(text=f'Observações da folha: {p["notes"] or "—"} | Amarelo = folha em revisão, verde = folha fechada. ● vermelha / laranja = colaborador com observações.')
+        self.pay_note.config(text=f'Observações da folha: {p["notes"] or "—"} | Valores: créditos em verde, débitos em vermelho. Fundo: amarelo = revisão, verde = fechada, laranja / ● vermelha = observações.')
 
     def update_payroll_lock_controls(self,status):
         closed=status=='Fechada'
@@ -5110,11 +5123,20 @@ class FolhaBase:
         styles=getSampleStyleSheet()
         title_style=ParagraphStyle('PayrollTitle',parent=styles['Title'],fontName='Helvetica-Bold',fontSize=16,leading=20,textColor=colors.HexColor(NAVY),alignment=1,spaceAfter=4)
         subtitle_style=ParagraphStyle('PayrollSubtitle',parent=styles['Normal'],fontName='Helvetica',fontSize=9,textColor=colors.HexColor('#64748b'),alignment=1,spaceAfter=10)
+        legend_style=ParagraphStyle('PayrollLegend',parent=subtitle_style,alignment=0,leading=20,spaceAfter=6)
         employee_style=ParagraphStyle('PayrollEmployee',parent=styles['Normal'],fontName='Helvetica',fontSize=7,leading=8)
-        installment_style=ParagraphStyle('PayrollInstallment',parent=styles['Normal'],fontName='Helvetica',fontSize=6.5,leading=7,alignment=1)
+        credit_color=colors.HexColor('#15803d')
+        debit_color=colors.HexColor('#b91c1c')
+        note_marker='<font color="#dc2626">&#8226;</font>'
+        installment_style=ParagraphStyle('PayrollInstallment',parent=styles['Normal'],fontName='Helvetica',fontSize=6.5,leading=7,alignment=1,textColor=debit_color)
         header_style=ParagraphStyle('PayrollHeader',parent=styles['Normal'],fontName='Helvetica-Bold',fontSize=6.5,leading=7,textColor=colors.white,alignment=1)
         summary_style=ParagraphStyle('PayrollSummary',parent=styles['Normal'],fontName='Helvetica-Bold',fontSize=10,leading=14,textColor=colors.HexColor(NAVY))
-        total_value_style=ParagraphStyle('PayrollTotalValue',parent=styles['Normal'],fontName='Helvetica-Bold',fontSize=17,leading=21,textColor=colors.HexColor('#15803d'),alignment=1)
+        amount_font_size=6
+        summary_value_style=ParagraphStyle('PayrollSummaryValue',parent=summary_style,fontSize=amount_font_size,leading=8)
+        credit_summary_style=ParagraphStyle('PayrollCreditSummary',parent=summary_value_style,textColor=credit_color)
+        debit_summary_style=ParagraphStyle('PayrollDebitSummary',parent=summary_value_style,textColor=debit_color)
+        observation_style=ParagraphStyle('PayrollObservation',parent=employee_style,fontSize=9,leading=12,spaceAfter=8)
+        total_value_style=ParagraphStyle('PayrollTotalValue',parent=credit_summary_style,alignment=1)
         generated=datetime.now().strftime('%d/%m/%Y %H:%M')
         page_size=landscape(A4)
 
@@ -5123,6 +5145,10 @@ class FolhaBase:
 
         document=SimpleDocTemplate(path,pagesize=page_size,rightMargin=12*mm,leftMargin=12*mm,topMargin=24*mm,bottomMargin=18*mm,title=f'Folha a pagar - {MONTHS[month-1]} {year}',author=AUTHOR)
         story=[
+            Paragraph(
+                '<font color="#15803d" size="20">&#8226;</font> Crédito'
+                ' &nbsp;&nbsp; <font color="#b91c1c" size="20">&#8226;</font> Débito',
+                legend_style),
             Paragraph(f'Folha a pagar - {MONTHS[month-1]} de {year}',title_style),
             Paragraph(f'Situação: {payroll["status"]} &nbsp;&nbsp; | &nbsp;&nbsp; Colaboradores: {len(rows)}',subtitle_style),
         ]
@@ -5138,7 +5164,8 @@ class FolhaBase:
         ]]
         totals={key:0.0 for key in ('salary','pf','overtime','vacation','meta','thirteenth','marmitex','advances','pharmacy','loan','other_deductions','total')}
         for row in rows:
-            employee_data=[Paragraph(xml_escape(str(row['name'])),employee_style)]
+            marker=f' {note_marker}' if (row['notes'] or '').strip() else ''
+            employee_data=[Paragraph(xml_escape(str(row['name']))+marker,employee_style)]
             employee_data.extend(
                 Paragraph(xml_escape(str(row['loan_installment'])),installment_style)
                 if key=='loan_installment'
@@ -5160,9 +5187,14 @@ class FolhaBase:
         payroll_table.setStyle(TableStyle([
             ('BACKGROUND',(0,0),(-1,-1),colors.HexColor('#eff6ff')),
             ('BACKGROUND',(0,0),(-1,0),colors.HexColor(NAVY)),
+            ('BACKGROUND',(1,0),(len(earnings_keys),0),credit_color),
+            ('BACKGROUND',(len(earnings_keys)+1,0),(-2,0),debit_color),
             ('TEXTCOLOR',(0,0),(-1,0),colors.white),
+            ('TEXTCOLOR',(1,1),(len(earnings_keys),-1),credit_color),
+            ('TEXTCOLOR',(len(earnings_keys)+1,1),(-2,-1),debit_color),
+            ('TEXTCOLOR',(-1,1),(-1,-1),credit_color),
             ('FONTNAME',(0,0),(-1,0),'Helvetica-Bold'),
-            ('FONTSIZE',(0,0),(-1,-1),6),
+            ('FONTSIZE',(0,0),(-1,-1),amount_font_size),
             ('ALIGN',(1,1),(-1,-1),'CENTER'),
             ('FONTNAME',(-1,1),(-1,-1),'Helvetica-Bold'),
             ('VALIGN',(0,0),(-1,-1),'MIDDLE'),
@@ -5170,15 +5202,15 @@ class FolhaBase:
             ('ROWBACKGROUNDS',(0,1),(-1,-1),[colors.white,colors.HexColor('#f3f6fb')]),
             ('LEFTPADDING',(0,0),(-1,-1),2),
             ('RIGHTPADDING',(0,0),(-1,-1),2),
-            ('TOPPADDING',(0,0),(-1,-1),3),
-            ('BOTTOMPADDING',(0,0),(-1,-1),3),
+            ('TOPPADDING',(0,0),(-1,-1),1.5),
+            ('BOTTOMPADDING',(0,0),(-1,-1),1.5),
         ]))
         gross=sum(totals[key] for key in ('salary','pf','overtime','vacation','meta','thirteenth'))
         deductions=sum(totals[key] for key in ('marmitex','advances','pharmacy','loan','other_deductions'))
         summary=Table([
-            [Paragraph(f'Total de proventos: {brl(gross)}',summary_style),
-             Paragraph(f'Total de descontos: {brl(deductions)}',summary_style)],
-            [Paragraph('TOTAL GERAL A PAGAR',summary_style),
+            [Paragraph(f'Total de proventos: {brl(gross)}',credit_summary_style),
+             Paragraph(f'Total de descontos: {brl(deductions)}',debit_summary_style)],
+            [Paragraph('TOTAL GERAL A PAGAR',summary_value_style),
              Paragraph(brl(totals['total']),total_value_style)],
         ],colWidths=[usable_width/2,usable_width/2])
         summary.setStyle(TableStyle([
@@ -5190,15 +5222,27 @@ class FolhaBase:
             ('ALIGN',(0,0),(-1,-1),'CENTER'),
             ('LEFTPADDING',(0,0),(-1,-1),8),
             ('RIGHTPADDING',(0,0),(-1,-1),8),
-            ('TOPPADDING',(0,0),(-1,-1),8),
-            ('BOTTOMPADDING',(0,0),(-1,-1),8),
+            ('TOPPADDING',(0,0),(-1,-1),3),
+            ('BOTTOMPADDING',(0,0),(-1,-1),3),
         ]))
         story.extend([
-            Paragraph('Proventos e descontos',subtitle_style),
             payroll_table,
             Spacer(1,8*mm),
             summary,
         ])
+        noted_rows=[row for row in rows if (row['notes'] or '').strip()]
+        if noted_rows:
+            story.extend([
+                Spacer(1,6*mm),
+                Paragraph('Observações dos colaboradores',summary_style),
+                Spacer(1,2*mm),
+            ])
+            for row in noted_rows:
+                notes=xml_escape(row['notes'].strip()).replace('\n','<br/>')
+                story.append(Paragraph(
+                    f'{note_marker} <b>{xml_escape(str(row["name"]))}</b><br/>'
+                    f'<font size="{observation_style.fontSize/2}">{notes}</font>',
+                    observation_style))
         document.build(story,onFirstPage=draw_page,onLaterPages=draw_page,canvasmaker=NumberedReportCanvas)
         return totals['total']
 
