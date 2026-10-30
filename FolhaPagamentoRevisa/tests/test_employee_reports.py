@@ -58,25 +58,32 @@ class EmployeeReportTests(unittest.TestCase):
 
     def test_pix_report_contains_only_pix_list_for_all_employees(self):
         count, text = self.generate_report("pix")
-        self.assertEqual(count, 2)
+        self.assertEqual(count, 1)
         self.assertIn("Relatório de PIX", text)
         self.assertIn("ana-pix@example.com", text)
-        self.assertIn("41999990000", text)
         self.assertIn("Ana Silva", text)
-        self.assertIn("Bruna Costa", text)
+        self.assertNotIn("41999990000", text)
+        self.assertNotIn("Bruna Costa", text)
+        self.assertNotIn("Inativo", text)
         self.assertNotIn("Banco Revisa", text)
         self.assertNotIn("Conta 456", text)
 
     def test_bank_report_contains_only_account_list_for_one_employee(self):
-        count, text = self.generate_report("bank", employee_id=2)
+        count, text = self.generate_report("bank", employee_id=1)
         self.assertEqual(count, 1)
         self.assertIn("Relatório de contas bancárias", text)
-        self.assertIn("Bruna Costa", text)
-        self.assertIn("Banco Brasil", text)
-        self.assertIn("Agência 789", text)
-        self.assertIn("Conta 012", text)
-        self.assertNotIn("Ana Silva", text)
-        self.assertNotIn("41999990000", text)
+        self.assertIn("Ana Silva", text)
+        self.assertIn("Banco Revisa", text)
+        self.assertIn("Agência 123", text)
+        self.assertIn("Conta 456", text)
+        self.assertNotIn("Bruna Costa", text)
+        self.assertNotIn("Inativo", text)
+
+    def test_selecting_inactive_employee_does_not_include_them(self):
+        count, text = self.generate_report("pix", employee_id=2)
+        self.assertEqual(count, 0)
+        self.assertNotIn("Bruna Costa", text)
+        self.assertNotIn("Inativo", text)
 
     def test_rejects_unknown_report_type(self):
         with self.assertRaises(ValueError):

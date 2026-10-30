@@ -5935,28 +5935,27 @@ class FolhaBase:
         report_columns={
             'pix':(
                 'Relatório de PIX',
-                ('Código','Colaborador','Chave PIX','Situação'),
-                ('code','name','pix','status'),
-                (27*mm,65*mm,150*mm,25*mm),
+                ('Código','Colaborador','Chave PIX'),
+                ('code','name','pix'),
+                (27*mm,65*mm,181*mm),
             ),
             'bank':(
                 'Relatório de contas bancárias',
-                ('Código','Colaborador','Banco','Agência','Conta','Situação'),
-                ('code','name','bank','bank_agency','bank_account','status'),
-                (20*mm,55*mm,50*mm,38*mm,82*mm,25*mm),
+                ('Código','Colaborador','Banco','Agência','Conta'),
+                ('code','name','bank','bank_agency','bank_account'),
+                (20*mm,50*mm,48*mm,38*mm,117*mm),
             ),
         }
         if report_type not in report_columns:
             raise ValueError('Tipo de relatório de colaborador inválido.')
         title,headers,fields,column_widths=report_columns[report_type]
-        columns=','.join(
-            'active AS status' if field=='status' else field
-            for field in fields)
+        columns=','.join(fields)
         query='SELECT '+columns+' FROM employees'
-        params=()
+        query+=' WHERE active=1'
+        params=[]
         if employee_id is not None:
-            query+=' WHERE id=?'
-            params=(employee_id,)
+            query+=' AND id=?'
+            params.append(employee_id)
         query+=' ORDER BY active DESC,name COLLATE NOCASE'
         with connect() as con:
             rows=con.execute(query,params).fetchall()
@@ -5991,12 +5990,7 @@ class FolhaBase:
             topMargin=24*mm,bottomMargin=18*mm,title=title,author=AUTHOR)
         data=[[paragraph(value,header_style) for value in headers]]
         for row in rows:
-            data.append([
-                paragraph(
-                    ('Ativo' if row[field] else 'Inativo')
-                    if field=='status' else row[field],value_style)
-                for field in fields
-            ])
+            data.append([paragraph(row[field],value_style) for field in fields])
         report_table=LongTable(
             data,colWidths=column_widths,repeatRows=1,hAlign='LEFT')
         report_table.setStyle(TableStyle([
@@ -6024,11 +6018,11 @@ class FolhaBase:
     def generate_employee_report_dialog(self):
         with connect() as con:
             employees=con.execute(
-                'SELECT id,name,code FROM employees ORDER BY active DESC,name COLLATE NOCASE').fetchall()
+                'SELECT id,name,code FROM employees WHERE active=1 ORDER BY name COLLATE NOCASE').fetchall()
         if not employees:
             messagebox.showwarning(
-                'Sem colaboradores',
-                'Cadastre um colaborador antes de gerar o relatório.',
+                'Sem colaboradores ativos',
+                'Cadastre ou ative um colaborador antes de gerar o relatório.',
                 parent=self)
             return
 
