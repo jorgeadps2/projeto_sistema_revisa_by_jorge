@@ -26,6 +26,13 @@ class EmployeeReportTests(unittest.TestCase):
                 name TEXT,
                 code TEXT,
                 active INTEGER,
+                role TEXT,
+                sector TEXT,
+                cpf TEXT,
+                ctps TEXT,
+                birth_date TEXT,
+                admission_date TEXT,
+                dismissal_date TEXT,
                 pix TEXT,
                 phone TEXT,
                 email TEXT,
@@ -42,16 +49,21 @@ class EmployeeReportTests(unittest.TestCase):
         """)
         self.connection.executemany("""
             INSERT INTO employees
-                (id,name,code,active,pix,phone,email,bank,bank_agency,bank_account,
+                (id,name,code,active,role,sector,cpf,ctps,birth_date,admission_date,
+                 dismissal_date,pix,phone,email,bank,bank_agency,bank_account,
                  address,address_number,bairro,cep,city,state)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """, [
-            (1, "Ana Silva", "A-100", 1, "ana-pix@example.com", "(41) 99999-0000",
-             "ana@example.com", "Banco Revisa", "Agência 123", "Conta 456",
-             "Rua das Flores", "10", "Centro", "80000-000", "Curitiba", "PR"),
-            (2, "Bruna Costa", "B-200", 0, "41999990000", "(41) 98888-0000",
-             "bruna@example.com", "Banco Brasil", "Agência 789", "Conta 012",
-             "Rua das Palmeiras", "20", "Jardim", "81000-000", "Curitiba", "PR"),
+            (1, "Ana Silva", "A-100", 1, "Mecânica", "Oficina", "123.456.789-00",
+             "CTPS-123", "1990-01-02", "2024-01-15", "", "ana-pix@example.com",
+             "(41) 99999-0000", "ana@example.com", "Banco Revisa", "Agência 123",
+             "Conta 456", "Rua das Flores", "10", "Centro", "80000-000",
+             "Curitiba", "PR"),
+            (2, "Bruna Costa", "B-200", 0, "Auxiliar", "Administrativo",
+             "987.654.321-00", "CTPS-456", "1992-03-04", "2023-08-01",
+             "2025-03-10", "41999990000", "(41) 98888-0000", "bruna@example.com",
+             "Banco Brasil", "Agência 789", "Conta 012", "Rua das Palmeiras",
+             "20", "Jardim", "81000-000", "Curitiba", "PR"),
         ])
         self.addCleanup(self.connection.close)
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -119,6 +131,39 @@ class EmployeeReportTests(unittest.TestCase):
         self.assertIn("Rua das Flores, 10, Centro, CEP 80000-000, Curitiba / PR", text)
         self.assertNotIn("Bruna Costa", text)
         self.assertNotIn("ana@example.com", text)
+
+    def test_general_report_creates_one_complete_page_per_active_employee(self):
+        self.connection.execute("UPDATE employees SET active=1 WHERE id=2")
+        path=Path(self.temp_dir.name)/"general.pdf"
+        with patch.object(APP,"connect",return_value=self.connection), \
+                patch.object(APP,"employee_salary_for_period",return_value=4500), \
+                patch.object(APP.FolhaBase,"pdf_page_header"):
+            count=self.app.write_employee_report_pdf(str(path),"general")
+
+        pages=PdfReader(path).pages
+        self.assertEqual(count,2)
+        self.assertEqual(len(pages),2)
+        ana_text=pages[0].extract_text()
+        bruna_text=pages[1].extract_text()
+        for value in (
+                "Ana Silva","Mecânica","Oficina","123.456.789-00","CTPS-123",
+                "02/01/1990","15/01/2024","(41) 99999-0000","ana@example.com",
+                "ana-pix@example.com","Banco Revisa","Agência 123","Conta 456",
+                "Rua das Flores, 10, Centro","80000-000","Curitiba / PR","4.500,00"):
+            with self.subTest(value=value):
+                self.assertIn(value,ana_text)
+        self.assertNotIn("Bruna Costa",ana_text)
+        self.assertIn("Bruna Costa",bruna_text)
+        self.assertNotIn("Ana Silva",bruna_text)
+
+    def test_general_report_for_one_employee_has_one_page(self):
+        path=Path(self.temp_dir.name)/"general-one.pdf"
+        with patch.object(APP,"connect",return_value=self.connection), \
+                patch.object(APP,"employee_salary_for_period",return_value=4500), \
+                patch.object(APP.FolhaBase,"pdf_page_header"):
+            count=self.app.write_employee_report_pdf(str(path),"general",employee_id=1)
+        self.assertEqual(count,1)
+        self.assertEqual(len(PdfReader(path).pages),1)
 
     def test_report_columns_expand_to_fit_content_without_filling_page(self):
         original_table = APP.LongTable

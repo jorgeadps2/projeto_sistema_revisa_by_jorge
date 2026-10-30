@@ -5933,6 +5933,9 @@ class FolhaBase:
         win.grab_set()
 
     def write_employee_report_pdf(self,path,report_type,employee_id=None):
+        if report_type=='general':
+            return self.write_general_employee_report_pdf(path,employee_id)
+
         report_columns={
             'pix':(
                 'Relatório de PIX',
@@ -6086,6 +6089,152 @@ class FolhaBase:
             canvasmaker=NumberedReportCanvas)
         return len(rows)
 
+    def write_general_employee_report_pdf(self,path,employee_id=None):
+        with connect() as con:
+            query='SELECT * FROM employees WHERE active=1'
+            params=[]
+            if employee_id is not None:
+                query+=' AND id=?'
+                params.append(employee_id)
+            query+=' ORDER BY name COLLATE NOCASE'
+            rows=con.execute(query,params).fetchall()
+            salaries={
+                row['id']:employee_salary_for_period(
+                    con,row['id'],datetime.now().year,datetime.now().month)
+                for row in rows
+            }
+
+        generated=datetime.now().strftime('%d/%m/%Y %H:%M')
+        page_size=portrait(A4)
+        styles=getSampleStyleSheet()
+        title_style=ParagraphStyle(
+            'GeneralEmployeeReportTitle',parent=styles['Title'],
+            fontName='Helvetica-Bold',fontSize=14,leading=17,
+            textColor=colors.HexColor(NAVY),alignment=1,spaceAfter=3)
+        employee_style=ParagraphStyle(
+            'GeneralEmployeeReportName',parent=styles['Normal'],
+            fontName='Helvetica-Bold',fontSize=12,leading=15,
+            textColor=colors.HexColor(NAVY),alignment=1,spaceAfter=2)
+        subtitle_style=ParagraphStyle(
+            'GeneralEmployeeReportSubtitle',parent=styles['Normal'],
+            fontName='Helvetica',fontSize=8,leading=10,
+            textColor=colors.HexColor('#64748b'),alignment=1,spaceAfter=8)
+        section_style=ParagraphStyle(
+            'GeneralEmployeeReportSection',parent=styles['Normal'],
+            fontName='Helvetica-Bold',fontSize=8,leading=9,
+            textColor=colors.white)
+        label_style=ParagraphStyle(
+            'GeneralEmployeeReportLabel',parent=styles['Normal'],
+            fontName='Helvetica-Bold',fontSize=7,leading=8,
+            textColor=colors.HexColor(NAVY))
+        value_style=ParagraphStyle(
+            'GeneralEmployeeReportValue',parent=styles['Normal'],
+            fontName='Helvetica',fontSize=7.5,leading=8.5,wordWrap='CJK')
+        def paragraph(value,style):
+            return Paragraph(xml_escape(str(value or '—')),style)
+
+        def blank(style):
+            return Paragraph('',style)
+
+        def section(title,entries):
+            header=Table(
+                [[paragraph(title,section_style)]],colWidths=[180*mm],hAlign='CENTER')
+            header.setStyle(TableStyle([
+                ('BACKGROUND',(0,0),(-1,-1),colors.HexColor(NAVY)),
+                ('LEFTPADDING',(0,0),(-1,-1),5),
+                ('RIGHTPADDING',(0,0),(-1,-1),5),
+                ('TOPPADDING',(0,0),(-1,-1),3),
+                ('BOTTOMPADDING',(0,0),(-1,-1),3),
+            ]))
+            data=[]
+            for index in range(0,len(entries),2):
+                first=entries[index]
+                cells=[
+                    paragraph(first[0],label_style),
+                    paragraph(first[1],value_style),
+                ]
+                if index+1<len(entries):
+                    second=entries[index+1]
+                    cells.extend([
+                        paragraph(second[0],label_style),
+                        paragraph(second[1],value_style),
+                    ])
+                else:
+                    cells.extend([blank(label_style),blank(value_style)])
+                data.append(cells)
+            details=Table(data,colWidths=[24*mm,66*mm,24*mm,66*mm],hAlign='CENTER')
+            details.setStyle(TableStyle([
+                ('BACKGROUND',(0,0),(0,-1),colors.HexColor('#eff6ff')),
+                ('BACKGROUND',(2,0),(2,-1),colors.HexColor('#eff6ff')),
+                ('ROWBACKGROUNDS',(1,0),(1,-1),[colors.white,colors.HexColor('#f3f6fb')]),
+                ('ROWBACKGROUNDS',(3,0),(3,-1),[colors.white,colors.HexColor('#f3f6fb')]),
+                ('GRID',(0,0),(-1,-1),0.25,colors.HexColor('#dbe3ee')),
+                ('VALIGN',(0,0),(-1,-1),'MIDDLE'),
+                ('LEFTPADDING',(0,0),(-1,-1),3),
+                ('RIGHTPADDING',(0,0),(-1,-1),3),
+                ('TOPPADDING',(0,0),(-1,-1),2),
+                ('BOTTOMPADDING',(0,0),(-1,-1),2),
+            ]))
+            return [header,details,Spacer(1,3*mm)]
+
+        def draw_page(canvas,document):
+            self.pdf_page_header(canvas,page_size,generated,document.page)
+
+        document=SimpleDocTemplate(
+            path,pagesize=page_size,rightMargin=15*mm,leftMargin=15*mm,
+            topMargin=22*mm,bottomMargin=15*mm,
+            title='Relatório geral de colaboradores',author=AUTHOR)
+        story=[]
+        for index,row in enumerate(rows):
+            if index:
+                story.append(PageBreak())
+            code=(row['code'] or '').strip() or '—'
+            story.extend([
+                Paragraph('Ficha cadastral do colaborador',title_style),
+                Paragraph(xml_escape(row['name']),employee_style),
+                Paragraph(
+                    f'Código: {xml_escape(code)} • Gerado em {generated}',
+                    subtitle_style),
+            ])
+            address=', '.join(part for part in (
+                (row['address'] or '').strip(),
+                (row['address_number'] or '').strip(),
+                (row['bairro'] or '').strip(),
+            ) if part)
+            locality=' / '.join(
+                value.strip() for value in (row['city'],row['state']) if value)
+            story.extend(section('DADOS PROFISSIONAIS',[
+                ('Cargo',row['role']),
+                ('Setor',row['sector']),
+                ('Salário atual',brl(salaries[row['id']])),
+                ('Admissão',employee_date_for_form(row['admission_date'])),
+                ('Demissão',employee_date_for_form(row['dismissal_date'])),
+            ]))
+            story.extend(section('DOCUMENTOS',[
+                ('CPF',row['cpf']),
+                ('CTPS',row['ctps']),
+                ('Nascimento',employee_date_for_form(row['birth_date'])),
+            ]))
+            story.extend(section('CONTATO',[
+                ('Telefone',row['phone']),
+                ('E-mail',row['email']),
+                ('Chave PIX',row['pix']),
+            ]))
+            story.extend(section('DADOS BANCÁRIOS',[
+                ('Banco',row['bank']),
+                ('Agência',row['bank_agency']),
+                ('Conta',row['bank_account']),
+            ]))
+            story.extend(section('ENDEREÇO',[
+                ('Endereço',address),
+                ('CEP',row['cep']),
+                ('Cidade/UF',locality),
+            ]))
+        document.build(
+            story,onFirstPage=draw_page,onLaterPages=draw_page,
+            canvasmaker=NumberedReportCanvas)
+        return len(rows)
+
     def generate_employee_report_dialog(self):
         with connect() as con:
             employees=con.execute(
@@ -6121,6 +6270,8 @@ class FolhaBase:
             values=list(employee_choices)).pack(fill='x',pady=(5,12))
 
         report_choices={
+            'Relatório geral (uma página por colaborador)':'general',
+            'Relatório geral (uma página por colaborador)':'general',
             'Relatório de PIX':'pix',
             'Relatório de conta bancária':'bank',
             'Relatório de telefone':'phone',
