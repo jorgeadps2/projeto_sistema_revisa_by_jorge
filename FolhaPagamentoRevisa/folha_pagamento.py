@@ -74,9 +74,27 @@ ADVANCE_KIND = 'Adiantamento Salarial'
 LOAN_KINDS = (LOAN_KIND, ADVANCE_KIND)
 AUTHOR = 'Revisa Injeção Diesel'
 MONTHS = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro']
-BG = '#f3f6fb'; NAVY = '#142b4a'; BLUE = '#2563eb'; TEXT = '#172b4d'; MUTED = '#64748b'; WHITE = '#ffffff'; GREEN = '#15803d'; ORANGE = '#b45309'
+BG = '#0B1220'; NAVY = '#142b4a'; BLUE = '#2563eb'; TEXT = '#172b4d'; MUTED = '#64748b'; WHITE = '#ffffff'; GREEN = '#15803d'; ORANGE = '#b45309'
+DARK_SURFACE = '#111C2E'; DARK_SURFACE_ALT = '#16243A'; DARK_BORDER = '#24344D'; DARK_SIDEBAR = '#0E1726'
+ON_DARK = '#E6EDF7'; ON_DARK_MUTED = '#8FA3BF'; ACCENT_HOVER = '#1d4ed8'
+PDF_ROW_ALT = '#f3f6fb'
 SIDEBAR = '#10243e'; SIDEBAR_SURFACE = '#183450'; SIDEBAR_HOVER = '#21415f'
 SIDEBAR_TEXT = '#dbe7f3'; SIDEBAR_MUTED = '#91a5bc'; SIDEBAR_ACCENT = '#60a5fa'
+DARK_HOVER = '#22324D'; DARK_SCROLL_ACTIVE = '#2A3B57'; DARK_DISABLED = '#5B6B82'
+ON_HOVER = WHITE; PRESSED_BG = BLUE; HEADING = ON_DARK
+LIGHT_THEME = False
+
+
+def use_light_theme():
+    """Tema claro usado somente pelo Sistemas Revisa integrado; o programa autônomo não chama esta função."""
+    global BG, NAVY, BLUE, TEXT, MUTED, ACCENT_HOVER, DARK_SURFACE, DARK_SURFACE_ALT, DARK_BORDER
+    global DARK_SIDEBAR, ON_DARK, ON_DARK_MUTED, DARK_HOVER, DARK_SCROLL_ACTIVE, DARK_DISABLED
+    global ON_HOVER, PRESSED_BG, HEADING, LIGHT_THEME
+    BG = '#F2F4F8'; NAVY = '#064B82'; BLUE = '#0875C9'; TEXT = '#20252B'; MUTED = '#667085'
+    ACCENT_HOVER = '#064B82'; DARK_SURFACE = '#FFFFFF'; DARK_SURFACE_ALT = '#E9EEF5'
+    DARK_BORDER = '#D5DCE5'; DARK_SIDEBAR = '#FFFFFF'; ON_DARK = '#20252B'; ON_DARK_MUTED = '#667085'
+    DARK_HOVER = '#DCEBFA'; DARK_SCROLL_ACTIVE = '#B9C3D0'; DARK_DISABLED = '#98A2B3'
+    ON_HOVER = '#064B82'; PRESSED_BG = '#B9D7F2'; HEADING = '#064B82'; LIGHT_THEME = True
 
 
 def temporary_pdf_path(prefix):
@@ -776,59 +794,62 @@ def authenticate():
     root=tk.Tk()
     root.title('Acesso - '+APP_NAME)
     set_window_icon(root)
-    root.configure(bg=WHITE)
+    root.configure(bg=BG)
     root.resizable(False,False)
     root.protocol('WM_DELETE_WINDOW',root.destroy)
-    root.geometry('820x500')
     configured=password_is_configured()
     state={'authenticated':False}
     style=ttk.Style(root)
-    style.configure('LoginTitle.TLabel',font=('Segoe UI Semibold',22),foreground=NAVY,background=WHITE)
-    style.configure('LoginSub.TLabel',font=('Segoe UI',10),foreground=MUTED,background=WHITE)
-    style.configure('LoginField.TLabel',font=('Segoe UI Semibold',10),foreground=TEXT,background=WHITE)
-    style.configure('LoginError.TLabel',font=('Segoe UI',9),foreground='#b91c1c',background=WHITE)
+    try: style.theme_use('clam')
+    except tk.TclError: pass
+    style.configure('LoginTitle.TLabel',font=('Segoe UI Semibold',17),foreground=ON_DARK,background=DARK_SURFACE)
+    style.configure('LoginSub.TLabel',font=('Segoe UI',9),foreground=ON_DARK_MUTED,background=DARK_SURFACE)
+    style.configure('LoginField.TLabel',font=('Segoe UI Semibold',9),foreground=ON_DARK_MUTED,background=DARK_SURFACE)
+    style.configure('LoginError.TLabel',font=('Segoe UI',9),foreground='#F87171',background=DARK_SURFACE)
+    style.configure('Login.TEntry',padding=(10,7),fieldbackground=DARK_SURFACE_ALT,foreground=ON_DARK,
+                    insertcolor=ON_DARK,bordercolor=DARK_BORDER,lightcolor=DARK_BORDER,darkcolor=DARK_BORDER)
+    style.map('Login.TEntry',bordercolor=[('focus',BLUE)],lightcolor=[('focus',BLUE)])
+    style.configure('Login.TCheckbutton',background=DARK_SURFACE,foreground=ON_DARK_MUTED,
+                    indicatorbackground=DARK_SURFACE_ALT,indicatorforeground=ON_DARK,focuscolor=DARK_SURFACE)
+    style.map('Login.TCheckbutton',background=[('active',DARK_SURFACE)],foreground=[('active',ON_DARK)],
+              indicatorbackground=[('selected',BLUE),('active',DARK_SURFACE_ALT)])
+    style.configure('Accent.TButton',padding=(12,9),background=BLUE,foreground=WHITE,
+                    font=('Segoe UI Semibold',10),relief='flat',borderwidth=0,focuscolor=BLUE)
+    style.map('Accent.TButton',background=[('active',ACCENT_HOVER)],foreground=[('active',WHITE)])
 
-    panel=tk.Frame(root,bg=NAVY,width=370)
-    panel.pack(side='left',fill='y')
-    panel.pack_propagate(False)
-    tk.Frame(panel,bg='#f97316',height=6).pack(fill='x')
-    logo_card=tk.Frame(panel,bg=WHITE)
-    logo_card.pack(fill='x',padx=24,pady=(38,16))
-    logo_source=tk.PhotoImage(file=resource_path('logo_revisa.png'))
-    logo=logo_source.subsample(2,2)
-    root.logo_image=logo
-    logo_card.configure(height=180)
-    logo_card.pack_propagate(False)
-    tk.Label(logo_card,image=logo,bg=WHITE).pack(expand=True)
-    tk.Label(panel,text='FOLHA DE PAGAMENTO',bg=NAVY,fg=WHITE,font=('Segoe UI Semibold',16)).pack(pady=(2,6))
-    tk.Frame(panel,bg='#2563eb',height=3,width=74).pack(pady=(16,0))
-    tk.Label(
-        panel,text='Desenvolvido por\nJorge Alberto de Paula',bg=NAVY,fg='#cbd5e1',
-        font=('Segoe UI Semibold',8),justify='center',wraplength=310).pack(side='bottom',pady=18)
+    tk.Frame(root,bg=BLUE,height=4).pack(fill='x')
+    card=tk.Frame(root,bg=DARK_SURFACE,highlightbackground=DARK_BORDER,highlightthickness=1,padx=28,pady=20)
+    card.pack(fill='both',expand=True,padx=18,pady=18)
+    header=tk.Frame(card,bg=DARK_SURFACE)
+    header.pack(fill='x')
+    with Image.open(resource_path('logo_revisa.png')) as logo_source:
+        logo_source=logo_source.convert('RGBA')
+        logo_source.thumbnail((140,64),Image.Resampling.LANCZOS)
+        logo_card=Image.new('RGBA',(logo_source.width+16,logo_source.height+12),WHITE)
+        logo_card.paste(logo_source,(8,6),logo_source)
+    root.logo_image=ImageTk.PhotoImage(logo_card,master=root)
+    tk.Label(header,image=root.logo_image,bg=DARK_SURFACE).pack(side='left',padx=(0,14))
+    titles=tk.Frame(header,bg=DARK_SURFACE)
+    titles.pack(side='left',fill='x')
+    tk.Label(titles,text='ACESSO AO SISTEMA',bg=DARK_SURFACE,fg='#60A5FA',font=('Segoe UI Semibold',8)).pack(anchor='w')
+    ttk.Label(titles,text='Folha de Pagamento',style='LoginTitle.TLabel').pack(anchor='w')
+    ttk.Label(titles,text='Entre com sua senha para continuar.',style='LoginSub.TLabel').pack(anchor='w')
+    tk.Frame(card,bg=DARK_BORDER,height=1).pack(fill='x',pady=(16,10))
 
-    content=tk.Frame(root,bg=WHITE)
-    content.pack(side='left',fill='both',expand=True)
-    body=tk.Frame(content,bg=WHITE,width=390,height=460)
-    body.pack(expand=True,anchor='center',padx=20)
-    body.pack_propagate(False)
-    login_content=tk.Frame(body,bg=WHITE)
-    login_content.pack(expand=True)
-    tk.Label(login_content,text='ACESSO AO SISTEMA',bg=WHITE,fg=BLUE,font=('Segoe UI Semibold',9)).pack(pady=(0,10))
-    ttk.Label(login_content,text='Bem-vindo(a)',style='LoginTitle.TLabel').pack()
-    ttk.Label(login_content,text='Entre com sua senha para continuar.',style='LoginSub.TLabel').pack(pady=(5,20))
-    form=tk.Frame(login_content,bg=WHITE,width=320)
-    form.pack()
+    form=tk.Frame(card,bg=DARK_SURFACE)
+    form.pack(fill='x')
+    form.columnconfigure(0,weight=1)
     password_var=tk.StringVar()
     confirm_var=tk.StringVar()
-    ttk.Label(form,text='Crie uma senha' if not configured else 'Senha de acesso',style='LoginField.TLabel').grid(row=0,column=0,sticky='w',pady=(0,6))
-    password_entry=ttk.Entry(form,textvariable=password_var,show='*',width=38)
-    password_entry.grid(row=1,column=0,sticky='ew',pady=(0,10),ipady=6)
+    ttk.Label(form,text='Crie uma senha' if not configured else 'Senha de acesso',style='LoginField.TLabel').grid(row=0,column=0,sticky='w',pady=(0,5))
+    password_entry=ttk.Entry(form,textvariable=password_var,show='*',width=40,style='Login.TEntry')
+    password_entry.grid(row=1,column=0,sticky='ew',pady=(0,8))
     password_entries=[password_entry]
     if not configured:
-        ttk.Label(form,text=f'Use pelo menos {PASSWORD_MIN_LENGTH} caracteres.',style='LoginSub.TLabel').grid(row=2,column=0,sticky='w',pady=(0,9))
-        ttk.Label(form,text='Confirme a senha',style='LoginField.TLabel').grid(row=3,column=0,sticky='w',pady=(0,6))
-        confirm_entry=ttk.Entry(form,textvariable=confirm_var,show='*',width=38)
-        confirm_entry.grid(row=4,column=0,sticky='ew',pady=(0,10),ipady=6)
+        ttk.Label(form,text=f'Use pelo menos {PASSWORD_MIN_LENGTH} caracteres.',style='LoginSub.TLabel').grid(row=2,column=0,sticky='w',pady=(0,8))
+        ttk.Label(form,text='Confirme a senha',style='LoginField.TLabel').grid(row=3,column=0,sticky='w',pady=(0,5))
+        confirm_entry=ttk.Entry(form,textvariable=confirm_var,show='*',width=40,style='Login.TEntry')
+        confirm_entry.grid(row=4,column=0,sticky='ew',pady=(0,8))
         password_entries.append(confirm_entry)
     show_var=tk.BooleanVar(value=False)
 
@@ -836,9 +857,9 @@ def authenticate():
         for entry in password_entries:
             entry.configure(show='' if show_var.get() else '*')
 
-    ttk.Checkbutton(login_content,text='Mostrar senha',variable=show_var,command=toggle_password_visibility).pack(pady=(0,10))
+    ttk.Checkbutton(card,text='Mostrar senha',variable=show_var,command=toggle_password_visibility,style='Login.TCheckbutton').pack(anchor='w')
     message_var=tk.StringVar()
-    ttk.Label(login_content,textvariable=message_var,style='LoginError.TLabel',wraplength=370,anchor='center').pack(fill='x',pady=(0,8))
+    ttk.Label(card,textvariable=message_var,style='LoginError.TLabel',wraplength=340,anchor='w').pack(fill='x',pady=(6,4))
 
     def submit(event=None):
         password=password_var.get()
@@ -860,13 +881,15 @@ def authenticate():
             return
         root.destroy()
 
-    ttk.Button(login_content,text='Criar senha e entrar' if not configured else 'Entrar com segurança',style='Accent.TButton',command=submit).pack(fill='x',padx=35,ipady=4)
+    ttk.Button(card,text='Criar senha e entrar' if not configured else 'Entrar com segurança',style='Accent.TButton',command=submit).pack(fill='x',pady=(4,0))
+    tk.Label(card,text='Desenvolvido por Jorge Alberto de Paula  •  Versão '+APP_VERSION,
+             bg=DARK_SURFACE,fg=ON_DARK_MUTED,font=('Segoe UI',8)).pack(pady=(14,0))
     password_entry.bind('<Return>',submit)
     if not configured:
         confirm_entry.bind('<Return>',submit)
     root.bind('<Escape>',lambda event:root.destroy())
     root.update_idletasks()
-    root.geometry(f'+{max(0,(root.winfo_screenwidth()-root.winfo_width())//2)}+{max(0,(root.winfo_screenheight()-root.winfo_height())//2)}')
+    root.geometry(f'+{max(0,(root.winfo_screenwidth()-root.winfo_reqwidth())//2)}+{max(0,(root.winfo_screenheight()-root.winfo_reqheight())//2)}')
     password_entry.focus_set()
     root.mainloop()
     return state['authenticated']
@@ -919,6 +942,8 @@ class ScrollableHost(ttk.Frame):
 
     def _scroll_target(self,event):
         try:
+            if not self.winfo_ismapped():
+                return None
             widget=self.winfo_containing(event.x_root,event.y_root)
         except (KeyError,tk.TclError):
             return None
@@ -937,26 +962,10 @@ class ScrollableHost(ttk.Frame):
             self.canvas.xview_scroll(int(-event.delta/120),'units')
 
 
-class FolhaApp(tk.Tk):
-    def __init__(self):
-        super().__init__()
-        self.title(APP_NAME)
-        set_window_icon(self)
-        central_geometry=central_geometry_from_args()
-        screen_width=self.winfo_screenwidth()
-        screen_height=self.winfo_screenheight()
-        if central_geometry is None:
-            minimum_width=min(760,max(320,screen_width-40))
-            minimum_height=min(480,max(240,screen_height-80))
-            window_width=min(1320,max(minimum_width,screen_width-80))
-            window_height=min(790,max(minimum_height,screen_height-120))
-            self.geometry(f'{window_width}x{window_height}')
-        else:
-            window_width,window_height,x,y=central_geometry
-            minimum_width=320
-            minimum_height=240
-            self.geometry(f'{window_width}x{window_height}+{x}+{y}')
-        self.minsize(minimum_width,minimum_height)
+class FolhaBase:
+    """Conteúdo da Folha; usado pela janela própria (FolhaApp) e pelo painel embutido (FolhaPanel)."""
+
+    def _init_folha(self):
         self.configure(bg=BG)
         today = datetime.now()
         self.current_payroll_year = today.year
@@ -967,9 +976,6 @@ class FolhaApp(tk.Tk):
         self._build()
         self.bind_all('<Map>',self._apply_dialog_branding,add='+')
         self.refresh_all()
-        self.protocol('WM_DELETE_WINDOW',self.on_close)
-        if central_geometry is None:
-            self.state('zoomed')
 
     def mega_backup_path(self):
         return os.path.join(AUTO_BACKUP_DIR,'backup_saida.db')
@@ -1022,7 +1028,7 @@ class FolhaApp(tk.Tk):
                 'Falha ao carregar o banco do Mega',
                 f'Não foi possível carregar a cópia do Mega:\n{ex}',parent=self)
 
-    def on_close(self):
+    def save_exit_backups(self):
         for directory in (BACKUP_DIR,AUTO_BACKUP_DIR):
             try:
                 os.makedirs(directory,exist_ok=True)
@@ -1036,6 +1042,9 @@ class FolhaApp(tk.Tk):
             except OSError:
                 pass
         self.record_mega_sync()
+
+    def on_close(self):
+        self.save_exit_backups()
         self.destroy()
 
     def _style(self):
@@ -1118,32 +1127,101 @@ class FolhaApp(tk.Tk):
         st.configure('CardTitle.TLabel',font=('Segoe UI',9),foreground=MUTED,background=WHITE)
         st.configure('CardValue.TLabel',font=('Segoe UI Semibold',21),foreground=NAVY,background=WHITE)
         st.configure('PageHeading.TLabel',font=('Segoe UI Semibold',14),foreground=NAVY,background=BG)
+        self._apply_dark_theme(st)
+
+    def _apply_dark_theme(self,st):
+        # Estrutura escura; tabelas, campos e cartões continuam claros para leitura dos dados.
+        st.configure('.',background=BG,foreground=ON_DARK,bordercolor=DARK_BORDER,
+                     lightcolor=DARK_BORDER,darkcolor=DARK_BORDER,troughcolor=DARK_SURFACE)
+        st.configure('TFrame',background=BG)
+        st.configure('TLabel',background=BG,foreground=ON_DARK)
+        st.configure('Title.TLabel',foreground=HEADING,background=BG)
+        st.configure('Sub.TLabel',foreground=ON_DARK_MUTED,background=BG)
+        st.configure('PageHeading.TLabel',foreground=HEADING,background=BG)
+        st.configure('TLabelframe',background=BG,bordercolor=DARK_BORDER,lightcolor=DARK_BORDER,darkcolor=DARK_BORDER)
+        st.configure('TLabelframe.Label',background=BG,foreground=ON_DARK,font=('Segoe UI Semibold',10))
+        for name in ('TCheckbutton','TRadiobutton'):
+            st.configure(name,background=BG,foreground=ON_DARK,indicatorbackground=WHITE,
+                         indicatorforeground=TEXT,focuscolor=BG)
+            st.map(name,background=[('active',DARK_SURFACE_ALT)],foreground=[('disabled',ON_DARK_MUTED),('active',ON_DARK)],
+                   indicatorbackground=[('selected',WHITE),('active',WHITE)])
+        st.configure('TEntry',fieldbackground=WHITE,foreground=TEXT,insertcolor=TEXT)
+        st.configure('TSpinbox',fieldbackground=WHITE,foreground=TEXT,insertcolor=TEXT,arrowcolor=ON_DARK,background=DARK_SURFACE_ALT)
+        st.configure('TCombobox',fieldbackground=WHITE,foreground=TEXT,arrowcolor=ON_DARK,background=DARK_SURFACE_ALT,
+                     selectbackground='#dbeafe',selectforeground=TEXT)
+        st.map('TCombobox',fieldbackground=[('readonly',WHITE),('disabled','#e2e8f0')],
+               foreground=[('readonly',TEXT),('disabled',MUTED)],
+               selectbackground=[('readonly','#dbeafe')],selectforeground=[('readonly',TEXT)])
+        st.configure('TScrollbar',background=DARK_SURFACE_ALT,troughcolor=DARK_SURFACE,arrowcolor=ON_DARK,bordercolor=DARK_BORDER)
+        st.map('TScrollbar',background=[('active',DARK_SCROLL_ACTIVE)])
+        st.configure('TNotebook',background=BG,bordercolor=DARK_BORDER)
+        st.configure('TNotebook.Tab',background=DARK_SURFACE,foreground=ON_DARK_MUTED,padding=(12,6))
+        st.map('TNotebook.Tab',background=[('selected',BLUE),('active',DARK_SURFACE_ALT)],
+               foreground=[('selected',WHITE),('active',ON_DARK)])
+        st.configure('TSeparator',background=DARK_BORDER)
+        st.configure('Toolbar.TFrame',background=DARK_SIDEBAR)
+        st.configure('Toolbar.TButton',background=DARK_SIDEBAR,foreground=ON_DARK,padding=(8,5))
+        st.map('Toolbar.TButton',background=[('pressed',PRESSED_BG),('active',DARK_SURFACE_ALT)],
+               foreground=[('active',ON_HOVER)])
+        st.configure('ToolbarSelected.TButton',background=BLUE,foreground=WHITE,padding=(8,5))
+        st.map('ToolbarSelected.TButton',background=[('pressed',ACCENT_HOVER),('active',ACCENT_HOVER)],
+               foreground=[('active',WHITE)])
+        for name in ('TButton','Secondary.TButton','Report.TButton','CompactReport.TButton','MonthNav.TButton'):
+            st.configure(name,background=DARK_SURFACE_ALT,foreground=ON_DARK,focuscolor=DARK_SURFACE_ALT)
+            st.map(name,background=[('pressed',PRESSED_BG),('active',DARK_HOVER)],
+                   foreground=[('disabled',DARK_DISABLED),('active',ON_HOVER)])
+        st.configure('Orange.TMenubutton',background=DARK_SURFACE_ALT,foreground=ON_DARK,arrowcolor=ON_DARK)
+        st.map('Orange.TMenubutton',background=[('active',DARK_HOVER)],
+               foreground=[('active',ON_HOVER)],arrowcolor=[('active',ON_HOVER)])
+        st.configure('Accent.TButton',background=BLUE,foreground=WHITE)
+        st.map('Accent.TButton',background=[('active',ACCENT_HOVER)],foreground=[('active',WHITE)])
+        self.option_add('*TCombobox*Listbox.background',WHITE)
+        self.option_add('*TCombobox*Listbox.foreground',TEXT)
+        self.option_add('*TCombobox*Listbox.selectBackground','#dbeafe')
+        self.option_add('*TCombobox*Listbox.selectForeground',TEXT)
 
     def _build(self):
-        toolbar=ttk.Frame(self,style='Toolbar.TFrame',padding=(6,4),relief='ridge',borderwidth=1)
+        toolbar=ttk.Frame(self,style='Toolbar.TFrame',padding=(8,6))
         toolbar.pack(fill='x')
         self.navigation_buttons={}
         navigation=[
             ('dashboard','Painel'),('payroll','Folha mensal'),
             ('employees','Colaboradores'),('salaries','Salários'),
             ('loans','Proventos / Descontos'),
-            ('about','Sobre'),
         ]
+        if not getattr(self,'centralized_actions',False):
+            navigation.append(('about','Sobre'))
         for section,label in navigation:
             button=ttk.Button(
                 toolbar,text=label,style='Toolbar.TButton',
                 command=lambda name=section:self.navigate(name))
             button.pack(side='left',padx=2)
             self.navigation_buttons[section]=button
-        self.backup_button=ttk.Button(
-            toolbar,text='Backup',style='Toolbar.TButton',
-            command=lambda:self.show_backup_options(self.backup_button))
-        self.backup_button.pack(side='left',padx=2)
+        if not getattr(self,'centralized_actions',False):
+            self.backup_button=ttk.Button(
+                toolbar,text='Backup',style='Toolbar.TButton',
+                command=lambda:self.show_backup_options(self.backup_button))
+            self.backup_button.pack(side='left',padx=2)
+            self.change_password_button=ttk.Button(
+                toolbar,text='Alterar senha',style='Toolbar.TButton',
+                command=self.change_password_dialog)
+            self.change_password_button.pack(side='left',padx=2)
         self._add_tab_action_icons(toolbar)
         for button in toolbar.winfo_children():
             button.configure(compound='top',width=14)
         self.navigation_buttons['loans'].configure(width=22)
-        self.navigation_buttons['about'].configure(width=8)
+        if 'about' in self.navigation_buttons:
+            self.navigation_buttons['about'].configure(width=8)
+        if getattr(self,'centralized_actions',False):
+            self.signing_expiry_label=tk.Label(
+                toolbar,text="",bg="#FFF7ED",fg="#9A3412",
+                font=("Segoe UI Semibold",9),anchor="w",justify="left",
+                padx=9,pady=5,relief="solid",bd=1,cursor="hand2")
+            self.signing_expiry_label.pack(side='left',padx=(8,0),pady=2)
+            self.signing_expiry_label.bind(
+                '<Button-1>',lambda _event:self.show_signing_expiry_details())
+            self.update_signing_expiry_notice()
+        tk.Frame(self,bg=DARK_BORDER,height=1).pack(fill='x')
         content=ttk.Frame(self,padding=(8,6))
         content.pack(fill='both',expand=True)
         titlebar=ttk.Frame(content)
@@ -1162,6 +1240,7 @@ class FolhaApp(tk.Tk):
         self.page_title.pack(side='left',pady=8)
         scroll_host=ScrollableHost(content)
         scroll_host.pack(fill='both',expand=True)
+        self.scroll_host=scroll_host
         self.page_host=scroll_host.inner
         self.dashboard_tab=ttk.Frame(self.page_host,padding=14)
         self.payroll_tab=ttk.Frame(self.page_host,padding=12)
@@ -1175,6 +1254,9 @@ class FolhaApp(tk.Tk):
 
     def _apply_dialog_branding(self,event):
         window=event.widget
+        scope=str(self)
+        if scope!='.' and not str(window).startswith(scope+'.'):
+            return
         if isinstance(window,tk.Toplevel):
             try:
                 window.iconbitmap(resource_path('folha_pagamento.ico'))
@@ -1201,11 +1283,39 @@ class FolhaApp(tk.Tk):
         if section!='dashboard':
             self.dashboard_logo_card.pack_forget()
         self.page_title.configure(text=self_title)
+        # O conteúdo da seção anterior pode ter deixado a área maior; recalcula as barras de rolagem.
+        self.scroll_host.after_idle(self.scroll_host._layout)
         if section=='loans':
             self.refresh_loans()
         for key,button in self.navigation_buttons.items():
             selected=key==section
             button.configure(style='ToolbarSelected.TButton' if selected else 'Toolbar.TButton')
+
+    def update_signing_expiry_notice(self):
+        if not getattr(self,'centralized_actions',False):
+            return
+        notice,status,_when=self.signing_status_callback()
+        if status=='ok':
+            text=f'Assinatura válida até {_when}'
+            background,foreground='#ECFDF3','#067647'
+        elif status=='expired':
+            text=f'ATENÇÃO: assinatura venceu em {_when}'
+            background,foreground='#FEF3F2','#B42318'
+        elif status=='warning':
+            text=f'ATENÇÃO: assinatura vence em {notice.split(" em ",1)[1].split(" (",1)[0]}'
+            background,foreground='#FFF7ED','#9A3412'
+        else:
+            text='Assinatura: validade indisponível'
+            background,foreground='#F3F4F6','#667085'
+        self.signing_expiry_label.configure(
+            text=text,bg=background,fg=foreground)
+        self.signing_expiry_details=notice
+
+    def show_signing_expiry_details(self):
+        messagebox.showinfo(
+            'Validade da assinatura digital',
+            self.signing_expiry_details,
+            parent=self.winfo_toplevel())
 
     def _build_about(self):
         ttk.Label(self.about_tab,text=APP_NAME,style='PageHeading.TLabel').pack(anchor='w',pady=(0,12))
@@ -1404,6 +1514,13 @@ class FolhaApp(tk.Tk):
                 draw.line((30,48,30,36,36,36,40,40,40,44,36,48,30,48),fill='white',width=2)
                 draw.line((46,48,46,36,54,36),fill='white',width=2)
                 draw.line((46,42,52,42),fill='white',width=2)
+            elif 'senha' in text:
+                draw.arc((18,6,46,38),180,360,fill='#93a4bb',width=7)
+                draw.line((18,22,18,30),fill='#93a4bb',width=7)
+                draw.line((46,22,46,30),fill='#93a4bb',width=7)
+                draw.rounded_rectangle((10,28,54,58),radius=7,fill='#2563eb',outline='#1e3a8a',width=2)
+                draw.ellipse((27,36,37,46),fill='white')
+                draw.line((32,44,32,52),fill='white',width=4)
             elif 'salvar' in text:
                 draw.rounded_rectangle((8,7,56,56),radius=4,fill='#4777ce',outline='#233f7b',width=2)
                 draw.rectangle((12,10,51,14),fill='#85aff1')
@@ -1412,6 +1529,38 @@ class FolhaApp(tk.Tk):
                 draw.rectangle((17,35,48,55),fill='#f8fbff',outline='#233f7b',width=2)
                 draw.line((23,42,42,42),fill='#9bb6d9',width=2)
                 draw.line((23,48,42,48),fill='#9bb6d9',width=2)
+            elif text=='painel':
+                for x0,y0 in ((8,6),(34,6),(8,30),(34,30)):
+                    draw.rounded_rectangle((x0,y0,x0+22,y0+20),radius=4,fill='#3b82f6' if (x0,y0)==(8,6) else '#93c5fd',outline='#1e40af',width=2)
+            elif text=='folha mensal':
+                draw.rounded_rectangle((8,10,56,56),radius=5,fill='#f8fbff',outline='#1e40af',width=2)
+                draw.rectangle((8,10,56,22),fill='#3b82f6')
+                draw.line((20,5,20,15),fill='#1e40af',width=4)
+                draw.line((44,5,44,15),fill='#1e40af',width=4)
+                for y in (29,38,47):
+                    for x in (15,27,39):
+                        draw.rectangle((x,y,x+7,y+5),fill='#93a4bb')
+            elif text=='colaboradores':
+                draw.ellipse((6,10,26,30),fill='#93c5fd',outline='#1e40af',width=2)
+                draw.pieslice((2,30,30,62),180,360,fill='#93c5fd',outline='#1e40af',width=2)
+                draw.ellipse((26,4,50,28),fill='#3b82f6',outline='#1e40af',width=2)
+                draw.pieslice((20,28,56,64),180,360,fill='#3b82f6',outline='#1e40af',width=2)
+            elif text=='salários':
+                draw.ellipse((8,8,56,56),fill='#22c55e',outline='#166534',width=3)
+                draw.arc((22,16,42,32),90,330,fill='white',width=4)
+                draw.arc((22,30,42,46),270,150,fill='white',width=4)
+                draw.line((32,11,32,51),fill='white',width=3)
+            elif text=='proventos / descontos':
+                draw.ellipse((4,8,32,36),fill='#22c55e',outline='#166534',width=2)
+                draw.line((11,22,25,22),fill='white',width=4)
+                draw.line((18,15,18,29),fill='white',width=4)
+                draw.ellipse((30,26,58,54),fill='#ef4444',outline='#991b1b',width=2)
+                draw.line((37,40,51,40),fill='white',width=4)
+            elif text=='backup':
+                draw.rounded_rectangle((8,7,56,56),radius=4,fill='#4777ce',outline='#233f7b',width=2)
+                draw.rectangle((20,8,44,27),fill='#c5d4e9',outline='#233f7b',width=2)
+                draw.rectangle((35,11,40,23),fill='#527299')
+                draw.rectangle((17,35,48,55),fill='#f8fbff',outline='#233f7b',width=2)
             else:
                 draw.rounded_rectangle((8,8,45,54),radius=3,fill='#fff8dd',outline='#b49450',width=2)
                 for y in (18,27,36,45):
@@ -2564,6 +2713,185 @@ class FolhaApp(tk.Tk):
             row=con.execute('SELECT status FROM payrolls WHERE year=? AND month=?',(year,month)).fetchone()
         return row is not None and row['status']=='Fechada'
 
+    def save_payroll_deductions_batch(self,year,month,entries):
+        if not 1900<=year<=9999 or not 1<=month<=12:
+            raise ValueError('Informe uma competência válida.')
+        values=[]
+        seen=set()
+        fields=('marmitex','pharmacy')
+        with connect() as con:
+            employees={row['id']:row['name'] for row in con.execute(
+                'SELECT id,name FROM employees WHERE active=1').fetchall()}
+            for employee_id,marmitex,pharmacy in entries:
+                if employee_id not in employees or employee_id in seen:
+                    raise ValueError('A lista contém colaborador inativo, inexistente ou repetido.')
+                seen.add(employee_id)
+                employee_values={}
+                for field,value in zip(fields,(marmitex,pharmacy)):
+                    if value is None or str(value).strip()=='':
+                        continue
+                    try:
+                        amount=money(value)
+                    except ValueError as ex:
+                        label='Marmitex' if field=='marmitex' else 'Farmácia'
+                        raise ValueError(f'{employees[employee_id]} — {label}: informe um valor válido.') from ex
+                    if not math.isfinite(amount) or amount<0:
+                        label='Marmitex' if field=='marmitex' else 'Farmácia'
+                        raise ValueError(f'{employees[employee_id]} — {label}: o valor não pode ser negativo.')
+                    employee_values[field]=round(amount,2)
+                if employee_values:
+                    values.append((employee_id,employees[employee_id],employee_values))
+            if not values:
+                raise ValueError('Informe Marmitex ou Farmácia para pelo menos um colaborador.')
+
+            self.apply_loan_installments(con,year,month)
+            payroll=con.execute(
+                'SELECT * FROM payrolls WHERE year=? AND month=?',(year,month)).fetchone()
+            if payroll and payroll['status']=='Fechada':
+                raise ValueError(
+                    f'A folha de {MONTHS[month-1]}/{year} está fechada. Reabra-a antes de lançar o lote.')
+            if not payroll:
+                payroll_id=con.execute(
+                    "INSERT INTO payrolls(year,month,status,notes) VALUES(?,?,'Em revisão','')",
+                    (year,month)).lastrowid
+                payroll=con.execute('SELECT * FROM payrolls WHERE id=?',(payroll_id,)).fetchone()
+            if payroll['loan_only']:
+                con.execute(
+                    "UPDATE payrolls SET loan_only=0 WHERE id=?",(payroll['id'],))
+                payroll=dict(payroll)
+                payroll['loan_only']=0
+            sync_payroll_employees(con,payroll)
+
+            total_marmitex=0.0
+            total_pharmacy=0.0
+            for employee_id,name,employee_values in values:
+                item=con.execute(
+                    'SELECT * FROM payroll_items WHERE payroll_id=? AND employee_id=?',
+                    (payroll['id'],employee_id)).fetchone()
+                if not item:
+                    raise ValueError(
+                        f'{name} não possui lançamento nesta competência. Confira a data de admissão.')
+                updated=dict(item)
+                for field,amount in employee_values.items():
+                    updated[field]=amount
+                total=calc_total(updated)
+                assignments=','.join(f'{field}=?' for field in employee_values)
+                con.execute(
+                    f"UPDATE payroll_items SET {assignments},total=?,source='Manual' WHERE id=?",
+                    (*employee_values.values(),total,item['id']))
+                total_marmitex+=employee_values.get('marmitex',0)
+                total_pharmacy+=employee_values.get('pharmacy',0)
+                con.execute('INSERT INTO audit_log(action,details) VALUES(?,?)',(
+                    'Lançamento de descontos em lote',
+                    f'{name} - {MONTHS[month-1]}/{year}: '
+                    +', '.join(
+                        f'{"Marmitex" if field=="marmitex" else "Farmácia"} {brl(amount)}'
+                        for field,amount in employee_values.items())))
+            con.execute(
+                "UPDATE payrolls SET status='Em revisão',updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                (payroll['id'],))
+        return len(values),round(total_marmitex,2),round(total_pharmacy,2)
+
+    def add_payroll_deduction_batch_dialog(self,field):
+        labels={'marmitex':'Marmitex','pharmacy':'Farmácia'}
+        if field not in labels:
+            raise ValueError('Tipo de desconto em lote inválido.')
+        label=labels[field]
+        period=self.selected_payroll_period()
+        if period is None:
+            return
+        year,month=period
+        with connect() as con:
+            employees=con.execute(
+                'SELECT id,name FROM employees WHERE active=1 ORDER BY name COLLATE NOCASE').fetchall()
+            payroll=con.execute(
+                'SELECT status FROM payrolls WHERE year=? AND month=?',(year,month)).fetchone()
+        if payroll and payroll['status']=='Fechada':
+            messagebox.showwarning(
+                'Folha fechada',
+                f'Reabra a folha de {MONTHS[month-1]}/{year} antes de lançar o lote.',
+                parent=self)
+            return
+        if not employees:
+            messagebox.showwarning(
+                'Sem colaboradores ativos','Cadastre ou ative colaboradores antes de lançar o lote.',
+                parent=self)
+            return
+        form=tk.Toplevel(self)
+        form.title(f'{label} em lote')
+        form.configure(bg=BG)
+        form.transient(self)
+        form.grab_set()
+        form.geometry(f'{min(820,self.winfo_screenwidth()-80)}x{min(650,self.winfo_screenheight()-100)}')
+        fields=ttk.Frame(form,padding=18)
+        fields.pack(fill='both',expand=True)
+        ttk.Label(fields,text=f'{label} em lote',font=('Segoe UI Semibold',15)).pack(anchor='w')
+        ttk.Label(
+            fields,
+            text=f'Competência: {MONTHS[month-1]}/{year}. Deixe em branco para manter o valor atual; '
+                 'informe 0,00 para zerar o desconto.',
+            style='Sub.TLabel',wraplength=700).pack(anchor='w',pady=(4,12))
+        headings=ttk.Frame(fields)
+        headings.pack(fill='x')
+        ttk.Label(headings,text='Colaborador',font=('Segoe UI Semibold',10)).grid(
+            row=0,column=0,sticky='w')
+        ttk.Label(headings,text=f'{label} (R$)',font=('Segoe UI Semibold',10)).grid(
+            row=0,column=1,padx=8)
+        host=ScrollableHost(fields)
+        host.pack(fill='both',expand=True,pady=(5,10))
+        host.inner.columnconfigure(0,weight=1)
+        variables=[]
+        inputs=[]
+        for index,employee in enumerate(employees):
+            ttk.Label(host.inner,text=employee['name']).grid(
+                row=index,column=0,sticky='w',padx=4,pady=5)
+            amount_var=tk.StringVar()
+            entry=ttk.Entry(host.inner,textvariable=amount_var,width=18,justify='right')
+            entry.grid(row=index,column=1,padx=8,pady=5)
+            variables.append((employee['id'],amount_var))
+            inputs.append(entry)
+
+            def reveal(event,widget):
+                form.update_idletasks()
+                height=host.inner.winfo_height()
+                top=host.canvas.canvasy(0)
+                bottom=top+host.canvas.winfo_height()
+                if widget.winfo_y()<top:
+                    host.canvas.yview_moveto(widget.winfo_y()/max(height,1))
+                elif widget.winfo_y()+widget.winfo_height()>bottom:
+                    host.canvas.yview_moveto(
+                        (widget.winfo_y()+widget.winfo_height()-host.canvas.winfo_height())/max(height,1))
+
+            entry.bind('<FocusIn>',lambda event,widget=entry:reveal(event,widget))
+
+        buttons=ttk.Frame(fields)
+        buttons.pack(fill='x')
+
+        def save():
+            try:
+                saved,total_marmitex,total_pharmacy=self.save_payroll_deductions_batch(
+                    year,month,
+                    [(employee_id,amount.get() if field=='marmitex' else '',
+                      amount.get() if field=='pharmacy' else '')
+                     for employee_id,amount in variables])
+            except (ValueError,sqlite3.Error) as ex:
+                messagebox.showerror('Não foi possível salvar o lote',str(ex),parent=form)
+                return
+            form.destroy()
+            self.load_payroll()
+            self.load_dashboard()
+            messagebox.showinfo(
+                f'{label} registrado',
+                f'{saved} colaborador(es) atualizado(s).\nTotal de {label}: '
+                f'{brl(total_marmitex if field=="marmitex" else total_pharmacy)}',
+                parent=self)
+
+        ttk.Button(buttons,text='Cancelar',command=form.destroy).pack(side='right')
+        ttk.Button(buttons,text='Salvar lote',style='Accent.TButton',command=save).pack(
+            side='right',padx=8)
+        inputs[0].focus_set()
+        self.wait_window(form)
+
     def apply_loan_installments(self, con, year, month):
         loans=con.execute('SELECT * FROM employee_loans ORDER BY id').fetchall()
         scheduled={}
@@ -3133,6 +3461,14 @@ class FolhaApp(tk.Tk):
             ttk.Button(buttons,text='Cancelar',command=form.destroy).pack(side='right',padx=(8,0))
             ttk.Button(buttons,text='Salvar',style='Accent.TButton',command=save_loan).pack(side='right')
 
+        ttk.Button(
+            loan_actions,text='Marmitex em lote',
+            command=lambda:self.add_payroll_deduction_batch_dialog('marmitex')
+        ).pack(fill='x',pady=(0,6))
+        ttk.Button(
+            loan_actions,text='Farmácia em lote',
+            command=lambda:self.add_payroll_deduction_batch_dialog('pharmacy')
+        ).pack(fill='x',pady=(0,6))
         self.loan_actions_menu=tk.Menu(self,tearoff=0)
         for label,command in (
                 ('Cadastrar empréstimo',lambda:add_loan_dialog(LOAN_KIND)),
@@ -3535,7 +3871,7 @@ class FolhaApp(tk.Tk):
             ('BACKGROUND',(0,0),(-1,0),colors.HexColor(NAVY)),
             ('VALIGN',(0,0),(-1,-1),'MIDDLE'),
             ('GRID',(0,0),(-1,-1),0.3,colors.HexColor('#dbe3ee')),
-            ('ROWBACKGROUNDS',(0,1),(-1,-1),[colors.white,colors.HexColor(BG)]),
+            ('ROWBACKGROUNDS',(0,1),(-1,-1),[colors.white,colors.HexColor(PDF_ROW_ALT)]),
             ('LEFTPADDING',(0,0),(-1,-1),3),
             ('RIGHTPADDING',(0,0),(-1,-1),3),
             ('TOPPADDING',(0,0),(-1,-1),1.5),
@@ -4694,18 +5030,27 @@ class FolhaApp(tk.Tk):
     def change_password_dialog(self):
         win=tk.Toplevel(self);win.title('Alterar senha de acesso');win.configure(bg=BG);win.transient(self);win.grab_set();win.resizable(False,False)
         set_window_icon(win)
-        body=ttk.Frame(win,padding=22);body.pack(fill='both',expand=True)
-        ttk.Label(body,text='Alterar senha',font=('Segoe UI Semibold',15)).grid(row=0,column=0,columnspan=2,sticky='w',pady=(0,12))
+        body=ttk.Frame(win,padding=24);body.pack(fill='both',expand=True)
+        ttk.Label(body,text='Alterar senha',font=('Segoe UI Semibold',15)).grid(row=0,column=0,columnspan=2,sticky='w',pady=(0,4))
+        ttk.Label(
+            body,text='Esta senha também é usada para entrar no Gerenciador Administrativo.',
+            style='Sub.TLabel',wraplength=330,justify='left').grid(row=1,column=0,columnspan=2,sticky='w',pady=(0,10))
         current_var=tk.StringVar()
         new_var=tk.StringVar()
         confirm_var=tk.StringVar()
-        for row,(label,var) in enumerate((('Senha atual',current_var),('Nova senha',new_var),('Confirme a nova senha',confirm_var)),1):
-            ttk.Label(body,text=label).grid(row=row*2-1,column=0,sticky='w',pady=5,padx=(0,12))
-            ttk.Entry(body,textvariable=var,show='*',width=32).grid(row=row*2,column=0,columnspan=2,sticky='ew',pady=(0,6))
+        entries=[]
+        fields=(('Senha atual',current_var),(f'Nova senha (mínimo {PASSWORD_MIN_LENGTH} caracteres)',new_var),('Confirme a nova senha',confirm_var))
+        for row,(label,var) in enumerate(fields,1):
+            ttk.Label(body,text=label).grid(row=row*2,column=0,sticky='w',pady=(6,3),padx=(0,12))
+            entry=ttk.Entry(body,textvariable=var,show='*',width=36)
+            entry.grid(row=row*2+1,column=0,columnspan=2,sticky='ew',pady=(0,4),ipady=3)
+            entries.append(entry)
 
-        def save():
+        def save(event=None):
             if not verify_password(current_var.get()):
                 messagebox.showerror('Senha incorreta','A senha atual não confere.',parent=win)
+                current_var.set('')
+                entries[0].focus_set()
                 return
             if len(new_var.get())<PASSWORD_MIN_LENGTH:
                 messagebox.showerror('Senha curta',f'A nova senha precisa ter pelo menos {PASSWORD_MIN_LENGTH} caracteres.',parent=win)
@@ -4717,9 +5062,17 @@ class FolhaApp(tk.Tk):
             win.destroy()
             messagebox.showinfo('Senha alterada','A senha de acesso foi atualizada.',parent=self)
 
-        buttons=ttk.Frame(body);buttons.grid(row=7,column=0,columnspan=2,sticky='e',pady=(8,0))
+        for entry in entries:
+            entry.bind('<Return>',save)
+        win.bind('<Escape>',lambda event:win.destroy())
+        buttons=ttk.Frame(body);buttons.grid(row=8,column=0,columnspan=2,sticky='e',pady=(14,0))
         ttk.Button(buttons,text='Cancelar',command=win.destroy).pack(side='right',padx=(8,0))
         ttk.Button(buttons,text='Salvar senha',style='Accent.TButton',command=save).pack(side='right')
+        win.update_idletasks()
+        x=self.winfo_rootx()+max(0,(self.winfo_width()-win.winfo_reqwidth())//2)
+        y=self.winfo_rooty()+max(0,(self.winfo_height()-win.winfo_reqheight())//3)
+        win.geometry(f'+{x}+{y}')
+        entries[0].focus_set()
 
     def selected_payroll_period(self):
         try:
@@ -4738,7 +5091,7 @@ class FolhaApp(tk.Tk):
                 return None,None
             rows=con.execute('''SELECT e.name,i.employee_id,i.loan_override,i.loan_manual,
                 i.salary,i.pf,i.overtime,i.vacation,i.meta,i.thirteenth,i.marmitex,
-                i.advances,i.pharmacy,i.loan,i.other_deductions,i.total
+                i.advances,i.pharmacy,i.loan,i.other_deductions,i.total,i.notes
                 FROM payroll_items i JOIN employees e ON e.id=i.employee_id
                 WHERE i.payroll_id=? ORDER BY e.name COLLATE NOCASE''',(payroll['id'],)).fetchall()
             report_rows=[
@@ -4899,9 +5252,10 @@ class FolhaApp(tk.Tk):
         with connect() as con:
             info={r['id']:r for r in con.execute('SELECT id,role,code,admission_date FROM employees')}
         styles=getSampleStyleSheet()
-        title_style=ParagraphStyle('SlipTitle',parent=styles['Title'],fontName='Helvetica-Bold',fontSize=16,leading=20,textColor=colors.HexColor(NAVY),alignment=1,spaceAfter=4)
-        subtitle_style=ParagraphStyle('SlipSubtitle',parent=styles['Normal'],fontName='Helvetica',fontSize=9,textColor=colors.HexColor('#64748b'),alignment=1,spaceAfter=10)
-        small=ParagraphStyle('SlipSmall',parent=styles['Normal'],fontName='Helvetica',fontSize=7.5,leading=8.5)
+        title_style=ParagraphStyle('SlipTitle',parent=styles['Title'],fontName='Helvetica-Bold',fontSize=11,leading=13,textColor=colors.HexColor(NAVY),alignment=1,spaceAfter=2)
+        subtitle_style=ParagraphStyle('SlipSubtitle',parent=styles['Normal'],fontName='Helvetica',fontSize=7.5,textColor=colors.HexColor('#64748b'),alignment=1,spaceAfter=5)
+        small=ParagraphStyle('SlipSmall',parent=styles['Normal'],fontName='Helvetica',fontSize=6.5,leading=7)
+        observation_style=ParagraphStyle('SlipObservation',parent=small,leading=8)
         generated=datetime.now().strftime('%d/%m/%Y %H:%M')
         page_size=portrait(A4)
         earnings=[('Salário','salary'),('PF / adicional','pf'),('Hora extra','overtime'),('Férias','vacation'),('13º salário','thirteenth')]
@@ -4957,7 +5311,7 @@ class FolhaApp(tk.Tk):
                 ('INNERGRID',(0,0),(-1,-1),0.3,colors.HexColor('#dbe3ee')),
                 ('BACKGROUND',(0,0),(-1,-1),colors.HexColor('#eff6ff')),
                 ('VALIGN',(0,0),(-1,-1),'MIDDLE'),
-                ('TOPPADDING',(0,0),(-1,-1),3),('BOTTOMPADDING',(0,0),(-1,-1),3),
+                ('TOPPADDING',(0,0),(-1,-1),1.5),('BOTTOMPADDING',(0,0),(-1,-1),1.5),
             ]))
             table=Table(lines,colWidths=[100*mm,43*mm,43*mm])
             table.setStyle(TableStyle([
@@ -4966,28 +5320,45 @@ class FolhaApp(tk.Tk):
                 ('FONTNAME',(0,0),(-1,0),'Helvetica-Bold'),
                 ('FONTNAME',(0,-1),(-1,-1),'Helvetica-Bold'),
                 ('BACKGROUND',(0,-1),(-1,-1),colors.HexColor('#eff6ff')),
-                ('FONTSIZE',(0,0),(-1,-1),7.5),
+                ('FONTSIZE',(0,0),(-1,-1),6.5),
                 ('ALIGN',(1,0),(-1,-1),'CENTER'),
                 ('GRID',(0,0),(-1,-1),0.3,colors.HexColor('#dbe3ee')),
-                ('TOPPADDING',(0,0),(-1,-1),2),('BOTTOMPADDING',(0,0),(-1,-1),2.5),
+                ('TOPPADDING',(0,0),(-1,-1),1),('BOTTOMPADDING',(0,0),(-1,-1),1),
                 ('VALIGN',(0,0),(-1,-1),'MIDDLE'),
-                ('LEADING',(0,0),(-1,-1),9),
+                ('LEADING',(0,0),(-1,-1),7.5),
             ]))
-            net=Table([[Paragraph('LÍQUIDO A RECEBER',ParagraphStyle('SlipNetLabel',parent=small,fontName='Helvetica-Bold',fontSize=7.5)),
-                        Paragraph(brl(row['total']),ParagraphStyle('SlipNet',parent=small,fontName='Helvetica-Bold',fontSize=10,textColor=colors.HexColor('#15803d'),alignment=1))]],
+            net=Table([[Paragraph('LÍQUIDO A RECEBER',ParagraphStyle('SlipNetLabel',parent=small,fontName='Helvetica-Bold',fontSize=6.5)),
+                        Paragraph(brl(row['total']),ParagraphStyle('SlipNet',parent=small,fontName='Helvetica-Bold',fontSize=8.5,textColor=colors.HexColor('#15803d'),alignment=1))]],
                       colWidths=[100*mm,86*mm])
             net.setStyle(TableStyle([
                 ('BACKGROUND',(0,0),(-1,-1),colors.HexColor('#dcfce7')),
                 ('BOX',(0,0),(-1,-1),0.8,colors.HexColor('#86efac')),
                 ('VALIGN',(0,0),(-1,-1),'MIDDLE'),
                 ('LEFTPADDING',(0,0),(-1,-1),6),
-                ('TOPPADDING',(0,0),(-1,-1),5),('BOTTOMPADDING',(0,0),(-1,-1),5),
+                ('TOPPADDING',(0,0),(-1,-1),3),('BOTTOMPADDING',(0,0),(-1,-1),3),
             ]))
             story.extend([
                 Paragraph('Cálculo Folha de Pagamento',title_style),
                 Paragraph(f'Competência: {MONTHS[month-1]} de {year}',subtitle_style),
-                head,Spacer(1,4*mm),table,Spacer(1,4*mm),net,
+                head,Spacer(1,2*mm),table,Spacer(1,2*mm),net,
             ])
+            notes=(row['notes'] or '').strip()
+            if notes:
+                observation=Table([[
+                    Paragraph(
+                        f'<b>Observações do colaborador</b><br/>'
+                        f'{xml_escape(notes).replace(chr(10), "<br/>")}',
+                        observation_style)
+                ]],colWidths=[186*mm])
+                observation.setStyle(TableStyle([
+                    ('BACKGROUND',(0,0),(-1,-1),colors.HexColor('#fff7ed')),
+                    ('BOX',(0,0),(-1,-1),0.5,colors.HexColor('#fed7aa')),
+                    ('LEFTPADDING',(0,0),(-1,-1),4),
+                    ('RIGHTPADDING',(0,0),(-1,-1),4),
+                    ('TOPPADDING',(0,0),(-1,-1),2),
+                    ('BOTTOMPADDING',(0,0),(-1,-1),2),
+                ]))
+                story.extend([Spacer(1,2*mm),observation])
             loan_lines=[['Valor emprestado','Qtd. parcelas','Parcela atual','Valor da parcela','Parcelas restantes','Saldo restante']]
             with connect() as con:
                 for loan in con.execute('SELECT * FROM employee_loans WHERE employee_id=? ORDER BY id',(row['employee_id'],)).fetchall():
@@ -5011,13 +5382,13 @@ class FolhaApp(tk.Tk):
                     ('BACKGROUND',(0,0),(-1,0),colors.HexColor(NAVY)),
                     ('TEXTCOLOR',(0,0),(-1,0),colors.white),
                     ('FONTNAME',(0,0),(-1,0),'Helvetica-Bold'),
-                    ('FONTSIZE',(0,0),(-1,-1),7.5),
+                    ('FONTSIZE',(0,0),(-1,-1),6.5),
                     ('ALIGN',(0,0),(-1,-1),'CENTER'),
                     ('VALIGN',(0,0),(-1,-1),'MIDDLE'),
                     ('GRID',(0,0),(-1,-1),0.3,colors.HexColor('#dbe3ee')),
-                    ('TOPPADDING',(0,0),(-1,-1),2),('BOTTOMPADDING',(0,0),(-1,-1),2.5),
+                    ('TOPPADDING',(0,0),(-1,-1),1),('BOTTOMPADDING',(0,0),(-1,-1),1),
                 ]))
-                story.extend([Spacer(1,5*mm),Paragraph('Empréstimos e adiantamentos',ParagraphStyle('SlipLoanTitle',parent=small,fontName='Helvetica-Bold',fontSize=9,textColor=colors.HexColor(NAVY))),Spacer(1,0.5*mm),loan_table])
+                story.extend([Spacer(1,2.5*mm),Paragraph('Empréstimos e adiantamentos',ParagraphStyle('SlipLoanTitle',parent=small,fontName='Helvetica-Bold',fontSize=7.5,textColor=colors.HexColor(NAVY))),Spacer(1,0.5*mm),loan_table])
             if index<len(rows)-1:
                 story.append(PageBreak())
         document.build(story,onFirstPage=lambda c,d:self.pdf_page_header(c,page_size,generated,d.page),onLaterPages=lambda c,d:self.pdf_page_header(c,page_size,generated,d.page),canvasmaker=NumberedReportCanvas)
@@ -6363,7 +6734,49 @@ class FolhaApp(tk.Tk):
                 parent=self)
             return
 
-if __name__=='__main__':
+class FolhaApp(FolhaBase,tk.Tk):
+    def __init__(self):
+        super().__init__()
+        self.title(APP_NAME)
+        set_window_icon(self)
+        central_geometry=central_geometry_from_args()
+        screen_width=self.winfo_screenwidth()
+        screen_height=self.winfo_screenheight()
+        if central_geometry is None:
+            minimum_width=min(760,max(320,screen_width-40))
+            minimum_height=min(480,max(240,screen_height-80))
+            window_width=min(1320,max(minimum_width,screen_width-80))
+            window_height=min(790,max(minimum_height,screen_height-120))
+            self.geometry(f'{window_width}x{window_height}')
+        else:
+            window_width,window_height,x,y=central_geometry
+            minimum_width=320
+            minimum_height=240
+            self.geometry(f'{window_width}x{window_height}+{x}+{y}')
+        self.minsize(minimum_width,minimum_height)
+        self._init_folha()
+        self.protocol('WM_DELETE_WINDOW',self.on_close)
+        if central_geometry is None:
+            self.state('zoomed')
+
+
+class FolhaPanel(FolhaBase,tk.Frame):
+    """Folha embutida em outra janela (Sistemas Revisa integrado)."""
+
+    def __init__(self,master,centralized_actions=False,signing_status_callback=None):
+        tk.Frame.__init__(self,master,bg=BG)
+        self.centralized_actions=centralized_actions
+        self.signing_status_callback=signing_status_callback
+        self._init_folha()
+
+    def reapply_style(self):
+        self._style()
+
+    def close_module(self):
+        self.save_exit_backups()
+        self.destroy()
+
+def main():
     if sys.platform=='win32':
         import ctypes
         result=ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
@@ -6371,5 +6784,9 @@ if __name__=='__main__':
         if result!=0:
             raise OSError(f'Não foi possível configurar o ícone da barra de tarefas: {result}')
     init_db()
-    if '--central-authenticated' in sys.argv or authenticate():
+    if authenticate():
         FolhaApp().mainloop()
+
+
+if __name__=='__main__':
+    main()

@@ -20,6 +20,32 @@ COBRANCAS = (
     ("aluguel", "Aluguel"), ("outras", "Outras despesas"), ("ajuste", "Ajustes"),
 )
 RATEIOS_DESPESAS = {"pessoas":"Por pessoas", "inquilinos":"Mesmo valor para cada inquilino"}
+FUNDO = "#0B1220"
+SUPERFICIE = "#111C2E"
+SUPERFICIE_ALT = "#16243A"
+BORDA = "#24344D"
+BARRA = "#0E1726"
+TEXTO_CLARO = "#E6EDF7"
+TEXTO_SUAVE = "#8FA3BF"
+AZUL = "#2563EB"
+AZUL_ESCURO = "#1D4ED8"
+COR_HOVER = "#22324D"
+TEXTO_HOVER = "#ffffff"
+TEXTO_DESATIVADO = "#5B6B82"
+ROLAGEM_ATIVA = "#2A3B57"
+AZUL_DESTAQUE = "#60A5FA"
+COR_PRESSIONADO = AZUL
+TEMA_CLARO = False
+
+
+def usar_tema_claro():
+    """Tema claro usado somente pelo Sistemas Revisa integrado; o programa autônomo não chama esta função."""
+    global FUNDO, SUPERFICIE, SUPERFICIE_ALT, BORDA, BARRA, TEXTO_CLARO, TEXTO_SUAVE, AZUL, AZUL_ESCURO
+    global COR_HOVER, TEXTO_HOVER, TEXTO_DESATIVADO, ROLAGEM_ATIVA, AZUL_DESTAQUE, COR_PRESSIONADO, TEMA_CLARO
+    FUNDO = "#F2F4F8"; SUPERFICIE = "#FFFFFF"; SUPERFICIE_ALT = "#E9EEF5"; BORDA = "#D5DCE5"
+    BARRA = "#FFFFFF"; TEXTO_CLARO = "#20252B"; TEXTO_SUAVE = "#667085"; AZUL = "#0875C9"
+    AZUL_ESCURO = "#064B82"; COR_HOVER = "#DCEBFA"; TEXTO_HOVER = "#064B82"; TEXTO_DESATIVADO = "#98A2B3"
+    ROLAGEM_ATIVA = "#B9C3D0"; AZUL_DESTAQUE = "#FF4B12"; COR_PRESSIONADO = "#B9D7F2"; TEMA_CLARO = True
 NOMES_MESES = (
     "janeiro", "fevereiro", "março", "abril", "maio", "junho",
     "julho", "agosto", "setembro", "outubro", "novembro", "dezembro",
@@ -72,11 +98,11 @@ def mostrar_logo_acesso(parent):
     from PIL import Image,ImageTk
     with Image.open(caminho_recurso("assets/revisa_logo.jpeg")) as original:
         imagem=original.convert("RGB")
-        imagem.thumbnail((150,150),Image.Resampling.LANCZOS)
+        imagem.thumbnail((84,84),Image.Resampling.LANCZOS)
     foto=ImageTk.PhotoImage(imagem)
-    logo=tk.Label(parent,image=foto,bg="#f3f5f7")
+    logo=tk.Label(parent,image=foto,bg=SUPERFICIE)
     logo.image=foto
-    logo.pack(anchor="center",pady=(0,12))
+    logo.pack(anchor="center",pady=(0,8))
     return logo
 
 def configurar_icone_aplicativo(root):
@@ -111,6 +137,7 @@ def conferir_acesso(dados,valor,recuperacao=False):
     if recuperacao:
         valor=valor.strip().upper()
     return hmac.compare_digest(resumo_segredo(valor,bytes.fromhex(dados[sal])),dados[campo])
+
 
 def salvar_acesso(senha,confirmacao):
     if len(senha)<8:
@@ -148,31 +175,52 @@ def solicitar_acesso(root,alterar=False):
     modo="alterar" if alterar else ("entrar" if dados else "cadastrar")
     win=tk.Toplevel(root)
     win.title("Acesso ao controle")
-    win.configure(bg="#f3f5f7")
+    win.configure(bg=FUNDO)
     win.resizable(False,False)
     if alterar:
         win.transient(root)
-    moldura=tk.Frame(win,bg="#f3f5f7",padx=24,pady=20)
-    moldura.pack(fill="both",expand=True)
+    estilo=ttk.Style(win)
+    try: estilo.theme_use("clam")
+    except tk.TclError: pass
+    estilo.configure("Acesso.TEntry",padding=(9,6),fieldbackground=SUPERFICIE_ALT,foreground=TEXTO_CLARO,
+                     insertcolor=TEXTO_CLARO,bordercolor=BORDA,lightcolor=BORDA,darkcolor=BORDA)
+    estilo.map("Acesso.TEntry",bordercolor=[("focus",AZUL)],lightcolor=[("focus",AZUL)])
+    estilo.configure("Acesso.TButton",padding=(10,8),background=AZUL,foreground="#ffffff",
+                     font=("Segoe UI Semibold",10),relief="flat",borderwidth=0,focuscolor=AZUL)
+    estilo.map("Acesso.TButton",background=[("pressed",AZUL_ESCURO),("active",AZUL_ESCURO)],foreground=[("active","#ffffff")])
+    estilo.configure("AcessoSecundario.TButton",padding=(10,6),background=SUPERFICIE_ALT,foreground=TEXTO_CLARO,
+                     font=("Segoe UI",9),relief="flat",borderwidth=0,focuscolor=SUPERFICIE_ALT)
+    estilo.map("AcessoSecundario.TButton",background=[("pressed",COR_PRESSIONADO),("active",COR_HOVER)],foreground=[("active",TEXTO_HOVER)])
+    tk.Frame(win,bg=AZUL,height=4).pack(fill="x")
+    moldura=tk.Frame(win,bg=SUPERFICIE,padx=26,pady=18,highlightbackground=BORDA,highlightthickness=1)
+    moldura.pack(fill="both",expand=True,padx=16,pady=16)
     segredo=tk.StringVar()
     nova=tk.StringVar()
     confirmacao=tk.StringVar()
+
+    def centralizar():
+        win.update_idletasks()
+        largura,altura=win.winfo_reqwidth(),win.winfo_reqheight()
+        x=max(0,(win.winfo_screenwidth()-largura)//2)
+        y=max(0,(win.winfo_screenheight()-altura)//2)
+        win.geometry(f"+{x}+{y}")
 
     def mostrar_codigo(codigo):
         for widget in moldura.winfo_children():
             widget.destroy()
         mostrar_logo_acesso(moldura)
-        tk.Label(moldura,text="Guarde seu código de recuperação",bg="#f3f5f7",fg="#18212b",
-                 font=("Segoe UI",13,"bold")).pack(anchor="w",pady=(0,12))
-        campo=ttk.Entry(moldura,width=42)
+        tk.Label(moldura,text="Guarde seu código de recuperação",bg=SUPERFICIE,fg=TEXTO_CLARO,
+                 font=("Segoe UI",13,"bold")).pack(anchor="w",pady=(0,10))
+        campo=ttk.Entry(moldura,width=40,style="Acesso.TEntry")
         campo.insert(0,codigo)
         campo.configure(state="readonly")
-        campo.pack(fill="x",pady=8)
+        campo.pack(fill="x",pady=6)
         tk.Label(moldura,text="Anote ou copie este código e guarde em local seguro.\n"
                  "Ele permite redefinir a senha e só é mostrado agora.\n"
-                 "O código anterior deixa de funcionar.",bg="#f3f5f7",fg="#25313c",
-                 justify="left").pack(anchor="w",pady=8)
-        ttk.Button(moldura,text="Guardei o código — continuar",command=win.destroy).pack(anchor="e",pady=8)
+                 "O código anterior deixa de funcionar.",bg=SUPERFICIE,fg=TEXTO_SUAVE,
+                 justify="left").pack(anchor="w",pady=6)
+        ttk.Button(moldura,text="Guardei o código — continuar",style="Acesso.TButton",command=win.destroy).pack(fill="x",pady=(8,0))
+        centralizar()
 
     def salvar():
         nonlocal autorizado
@@ -200,7 +248,9 @@ def solicitar_acesso(root,alterar=False):
         mostrar_logo_acesso(moldura)
         titulo={"entrar":"Digite sua senha","cadastrar":"Cadastre sua senha",
                 "alterar":"Alterar senha","recuperar":"Recuperar acesso"}[modo]
-        tk.Label(moldura,text=titulo,bg="#f3f5f7",fg="#18212b",font=("Segoe UI",15,"bold")).pack(anchor="w",pady=(0,12))
+        tk.Label(moldura,text="CONTROLE DE ENERGIA E ÁGUA",bg=SUPERFICIE,fg=AZUL_DESTAQUE,
+                 font=("Segoe UI Semibold",8)).pack(anchor="center")
+        tk.Label(moldura,text=titulo,bg=SUPERFICIE,fg=TEXTO_CLARO,font=("Segoe UI",15,"bold")).pack(anchor="center",pady=(0,8))
         campos=[]
         if modo!="cadastrar":
             campos.append(("Código de recuperação" if modo=="recuperar" else "Senha atual" if modo=="alterar" else "Senha",segredo))
@@ -208,17 +258,18 @@ def solicitar_acesso(root,alterar=False):
             campos.extend((("Nova senha (mínimo 8 caracteres)",nova),("Confirme a nova senha",confirmacao)))
         primeiro=None
         for rotulo,variavel in campos:
-            tk.Label(moldura,text=rotulo,bg="#f3f5f7",fg="#25313c").pack(anchor="w",pady=(8,4))
-            campo=ttk.Entry(moldura,textvariable=variavel,show="*",width=42)
+            tk.Label(moldura,text=rotulo,bg=SUPERFICIE,fg=TEXTO_SUAVE,font=("Segoe UI Semibold",9)).pack(anchor="w",pady=(8,4))
+            campo=ttk.Entry(moldura,textvariable=variavel,show="*",width=40,style="Acesso.TEntry")
             campo.pack(fill="x")
             campo.bind("<Return>",lambda evento:salvar())
             if primeiro is None:
                 primeiro=campo
-        ttk.Button(moldura,text="Entrar" if modo=="entrar" else "Salvar senha",command=salvar).pack(fill="x",pady=(18,8))
+        ttk.Button(moldura,text="Entrar" if modo=="entrar" else "Salvar senha",style="Acesso.TButton",command=salvar).pack(fill="x",pady=(16,6))
         if modo=="entrar":
-            ttk.Button(moldura,text="Esqueci a senha",command=recuperar).pack(fill="x",pady=4)
-        ttk.Button(moldura,text="Cancelar",command=win.destroy).pack(fill="x",pady=4)
+            ttk.Button(moldura,text="Esqueci a senha",style="AcessoSecundario.TButton",command=recuperar).pack(fill="x",pady=3)
+        ttk.Button(moldura,text="Cancelar",style="AcessoSecundario.TButton",command=win.destroy).pack(fill="x",pady=3)
         primeiro.focus_set()
+        centralizar()
 
     def recuperar():
         nonlocal modo
@@ -286,8 +337,19 @@ def data_iso(v):
     raise ValueError("Data inválida. Use DD/MM/AAAA.")
 
 class App:
-    def __init__(self, root):
+    def __init__(self, root, embutido=False):
         self.root = root
+        self.embutido = embutido
+        if not embutido:
+            self.configurar_janela()
+        self.conn = sqlite3.connect(DB_PATH)
+        self.conn.row_factory = sqlite3.Row
+        self.criar_banco()
+        self.configurar_estilo()
+        self.montar()
+        self.atualizar()
+
+    def configurar_janela(self):
         self.root.title(f"{APP_NAME}  •  v{APP_VERSION}")
         geometria_central=geometria_central_dos_argumentos()
         if geometria_central is None:
@@ -297,12 +359,6 @@ class App:
             largura,altura,x,y=geometria_central
             self.root.geometry(f"{largura}x{altura}+{x}+{y}")
             self.root.minsize(320,240)
-        self.conn = sqlite3.connect(DB_PATH)
-        self.conn.row_factory = sqlite3.Row
-        self.criar_banco()
-        self.configurar_estilo()
-        self.montar()
-        self.atualizar()
 
     def criar_banco(self):
         self.conn.executescript("""
@@ -405,98 +461,146 @@ class App:
         self.conn.commit()
 
     def configurar_estilo(self):
-        self.root.configure(bg="#f3f5f7")
+        self.root.configure(bg=FUNDO)
         s=ttk.Style()
         try: s.theme_use("clam")
         except tk.TclError: pass
-        s.configure(".", font=("Segoe UI", 10),background="#f3f5f7",foreground="#25313c")
-        s.configure("TFrame", background="#f3f5f7")
-        s.configure("TLabel", background="#f3f5f7", foreground="#25313c")
-        s.configure("TLabelframe",background="#f3f5f7",bordercolor="#d4d9de")
-        s.configure("TLabelframe.Label",background="#f3f5f7",foreground="#25313c")
-        s.configure("TButton", padding=7,background="#e9edf0",foreground="#25313c")
-        s.map("TButton",background=[("pressed","#d9e2e9"),("active","#e1e8ed")])
-        s.configure("TEntry",fieldbackground="#ffffff",foreground="#25313c")
-        s.configure("TCombobox",fieldbackground="#ffffff",foreground="#25313c",selectbackground="#dce7f0",selectforeground="#25313c")
+        s.configure(".", font=("Segoe UI", 10),background=FUNDO,foreground=TEXTO_CLARO,
+                    bordercolor=BORDA,lightcolor=BORDA,darkcolor=BORDA,troughcolor=SUPERFICIE)
+        s.configure("TFrame", background=FUNDO)
+        s.configure("TLabel", background=FUNDO, foreground=TEXTO_CLARO)
+        s.configure("TLabelframe",background=FUNDO,bordercolor=BORDA)
+        s.configure("TLabelframe.Label",background=FUNDO,foreground=TEXTO_CLARO)
+        s.configure("TButton", padding=7,background=SUPERFICIE_ALT,foreground=TEXTO_CLARO)
+        s.map("TButton",background=[("pressed",COR_PRESSIONADO),("active",COR_HOVER)],
+              foreground=[("disabled",TEXTO_DESATIVADO),("active",TEXTO_HOVER)])
+        s.configure("TEntry",fieldbackground="#ffffff",foreground="#18212b",insertcolor="#18212b")
+        s.configure("TCombobox",fieldbackground="#ffffff",foreground="#25313c",selectbackground="#dce7f0",selectforeground="#25313c",
+                    background=SUPERFICIE_ALT,arrowcolor=TEXTO_CLARO)
         s.map("TCombobox",fieldbackground=[("readonly","#ffffff")],foreground=[("readonly","#25313c")])
-        s.map("TCheckbutton",background=[("active","#e9edf0")])
-        s.map("TRadiobutton",background=[("active","#e9edf0")])
+        s.configure("TCheckbutton",background=FUNDO,foreground=TEXTO_CLARO,indicatorbackground="#ffffff",focuscolor=FUNDO)
+        s.configure("TRadiobutton",background=FUNDO,foreground=TEXTO_CLARO,indicatorbackground="#ffffff",focuscolor=FUNDO)
+        s.map("TCheckbutton",background=[("active",SUPERFICIE_ALT)],foreground=[("active",TEXTO_CLARO)])
+        s.map("TRadiobutton",background=[("active",SUPERFICIE_ALT)],foreground=[("active",TEXTO_CLARO)])
+        s.configure("TScrollbar",background=SUPERFICIE_ALT,troughcolor=SUPERFICIE,arrowcolor=TEXTO_CLARO,bordercolor=BORDA)
+        s.map("TScrollbar",background=[("active",ROLAGEM_ATIVA)])
         s.configure("Treeview", rowheight=28, background="#ffffff", fieldbackground="#ffffff", foreground="#25313c")
         s.map("Treeview",background=[("selected","#dce7f0")],foreground=[("selected","#25313c")])
         s.configure("Treeview.Heading", font=("Segoe UI", 9, "bold"),background="#e9edf0",foreground="#25313c")
         s.map("Treeview.Heading",background=[("active","#e1e8ed")])
-        s.configure("TNotebook", background="#f3f5f7")
-        s.configure("TNotebook.Tab", padding=(14, 9), font=("Segoe UI", 10, "bold"),background="#dfe5eb",foreground="#25313c")
-        s.map("TNotebook.Tab",background=[("selected","#ffe59a"),("active","#edf1f5")],
-              foreground=[("selected","#18212b"),("active","#25313c")])
-        s.configure("Toolbar.TFrame",background="#e9edf0")
+        s.configure("TNotebook", background=FUNDO,bordercolor=BORDA)
+        s.configure("TNotebook.Tab", padding=(14, 9), font=("Segoe UI", 10, "bold"),background=SUPERFICIE,foreground=TEXTO_SUAVE)
+        s.map("TNotebook.Tab",background=[("selected",AZUL),("active",SUPERFICIE_ALT)],
+              foreground=[("selected","#ffffff"),("active",TEXTO_CLARO)])
+        s.configure("Toolbar.TFrame",background=BARRA)
         s.configure("Toolbar.TButton",padding=(14,9),font=("Segoe UI Semibold",10),
-                    background="#e8eef6",foreground="#334b68",relief="flat",borderwidth=0)
-        s.map("Toolbar.TButton",background=[("pressed","#cbd8e9"),("active","#dbe6f3")])
+                    background=BARRA,foreground=TEXTO_CLARO,relief="flat",borderwidth=0,focuscolor=BARRA)
+        s.map("Toolbar.TButton",background=[("pressed",COR_PRESSIONADO),("active",SUPERFICIE_ALT)],foreground=[("active",TEXTO_HOVER)])
         s.configure("ToolbarSelected.TButton",padding=(14,9),font=("Segoe UI Semibold",10),
-                    background="#ff4500",foreground="#142b4a",relief="flat",borderwidth=0)
-        s.map("ToolbarSelected.TButton",background=[("pressed","#e63e00"),("active","#ff642b")],
-              foreground=[("active","#142b4a")])
-        s.configure("PageHeading.TLabel",font=("Segoe UI Semibold",14),foreground="#142b4a")
-        s.configure("Sub.TLabel",font=("Segoe UI",9),foreground="#64748b")
-        s.configure("TButton",padding=(9,5),font=("Segoe UI Semibold",9),relief="flat",borderwidth=0)
+                    background=AZUL,foreground="#ffffff",relief="flat",borderwidth=0,focuscolor=AZUL)
+        s.map("ToolbarSelected.TButton",background=[("pressed",AZUL_ESCURO),("active",AZUL_ESCURO)],
+              foreground=[("active","#ffffff")])
+        s.configure("PageHeading.TLabel",font=("Segoe UI Semibold",14),foreground=TEXTO_CLARO)
+        s.configure("Sub.TLabel",font=("Segoe UI",9),foreground=TEXTO_SUAVE)
+        s.configure("TButton",padding=(9,5),font=("Segoe UI Semibold",9),relief="flat",borderwidth=0,focuscolor=SUPERFICIE_ALT)
         s.configure("Treeview",rowheight=30,borderwidth=0)
         s.configure("Treeview.Heading",font=("Segoe UI Semibold",9),padding=8)
         s.layout("Navigation.TNotebook.Tab",[])
+        self.root.option_add("*Toplevel.background",FUNDO)
+        self.root.option_add("*TCombobox*Listbox.background","#ffffff")
+        self.root.option_add("*TCombobox*Listbox.foreground","#25313c")
+        self.root.option_add("*TCombobox*Listbox.selectBackground","#dce7f0")
+        self.root.option_add("*TCombobox*Listbox.selectForeground","#25313c")
 
     def configurar_estilo_formulario(self,win):
-        win.configure(bg="#f3f5f7")
+        win.configure(bg=FUNDO)
         style=ttk.Style(win)
-        style.configure("Form.TFrame",background="#f3f5f7")
-        style.configure("Form.TLabel",background="#f3f5f7",foreground="#25313c")
-        style.configure("Form.Title.TLabel",background="#f3f5f7",foreground="#18212b",font=("Segoe UI",16,"bold"))
-        style.configure("Form.Subtitle.TLabel",background="#f3f5f7",foreground="#596b7b")
-        style.configure("Form.TLabelframe",background="#f3f5f7",foreground="#25313c")
-        style.configure("Form.TLabelframe.Label",background="#f3f5f7",foreground="#25313c",font=("Segoe UI",10,"bold"))
+        style.configure("Form.TFrame",background=FUNDO)
+        style.configure("Form.TLabel",background=FUNDO,foreground=TEXTO_CLARO)
+        style.configure("Form.Title.TLabel",background=FUNDO,foreground=TEXTO_CLARO,font=("Segoe UI",16,"bold"))
+        style.configure("Form.Subtitle.TLabel",background=FUNDO,foreground=TEXTO_SUAVE)
+        style.configure("Form.TLabelframe",background=FUNDO,foreground=TEXTO_CLARO,bordercolor=BORDA)
+        style.configure("Form.TLabelframe.Label",background=FUNDO,foreground=TEXTO_CLARO,font=("Segoe UI",10,"bold"))
         style.configure("Form.TEntry",fieldbackground="#ffffff",foreground="#18212b")
-        style.configure("Form.TCheckbutton",background="#f3f5f7",foreground="#25313c")
-        style.map("Form.TCheckbutton",background=[("active","#e5e9ed")])
+        style.configure("Form.TCheckbutton",background=FUNDO,foreground=TEXTO_CLARO)
+        style.map("Form.TCheckbutton",background=[("active",SUPERFICIE_ALT)])
 
     def montar(self):
         toolbar=ttk.Frame(self.root,style="Toolbar.TFrame",padding=(12,8))
         toolbar.pack(fill="x")
         self.icones_navegacao=self.criar_icones_navegacao()
         self.botoes_navegacao={}
-        for indice,texto in enumerate(("Lançamentos mensais","Inquilinos","Relatórios e backup","Sobre")):
+        navigation_labels = [(0, "Lançamentos" if self.embutido else "Lançamentos mensais"),
+                             (1, "Inquilinos"),
+                             (2, "Relatórios" if self.embutido else "Relatórios e backup")]
+        if not self.embutido:
+            navigation_labels.append((3, "Sobre"))
+        for indice,texto in navigation_labels:
             botao=ttk.Button(
                 toolbar,text=texto,style="Toolbar.TButton",image=self.icones_navegacao[4 if indice==3 else indice],
-                compound="top",width=10 if indice==3 else 22,
+                compound="top",width=(14 if self.embutido else (8 if indice==3 else (22 if indice==0 else 14))),
                 command=lambda aba=indice:self.nb.select(aba),
             )
             botao.pack(side="left",padx=(0,6))
             self.botoes_navegacao[indice]=botao
-        ttk.Button(toolbar,text="Backup rápido",style="Toolbar.TButton",
-                   image=self.icones_navegacao[3],compound="top",width=16,
-                   command=self.backup_rapido).pack(side="right")
+        if not self.embutido:
+            ttk.Button(toolbar,text="Backup rápido",style="Toolbar.TButton",
+                       image=self.icones_navegacao[3],compound="top",width=16,
+                       command=self.backup_rapido).pack(side="right")
+            self.icone_senha=self.criar_icone_senha()
+            self.botao_alterar_senha=ttk.Button(
+                toolbar,text="Alterar senha",style="Toolbar.TButton",
+                image=self.icone_senha,compound="top",width=14,
+                command=lambda:solicitar_acesso(self.root,alterar=True))
+            self.botao_alterar_senha.pack(side="right",padx=(0,6))
+        if self.embutido:
+            self.aviso_aberto=tk.Label(
+                toolbar, text="", bg="#FFF7ED", fg="#9A3412",
+                font=("Segoe UI Semibold",9), anchor="w", justify="left",
+                padx=9, pady=5, relief="solid", bd=1, cursor="hand2",
+            )
+            self.aviso_aberto.configure(highlightthickness=0)
+            self.aviso_aberto.bind("<Button-1>", self.mostrar_detalhes_aberto)
+        else:
+            self.aviso_aberto=tk.Label(
+                self.root,text="",bg="#ffe8e8",fg="#8b2525",
+                font=("Segoe UI",11,"bold"),anchor="center",justify="center",
+                padx=12,pady=6)
+        tk.Frame(self.root,bg=BORDA,height=1).pack(fill="x")
         cabecalho=ttk.Frame(self.root,padding=(20,12))
         cabecalho.pack(fill="x")
         self.titulo_pagina=ttk.Label(cabecalho,text="Lançamentos mensais",style="PageHeading.TLabel")
         self.titulo_pagina.pack(side="left")
         ttk.Label(cabecalho,text="REVISA | Energia e Água • Barracão 1 e 2",style="Sub.TLabel").pack(side="right")
-        self.aviso_aberto=tk.Label(self.root,text="",bg="#ffe8e8",fg="#8b2525",
-                                  font=("Segoe UI",11,"bold"),anchor="center",justify="center",
-                                  padx=12,pady=6)
         self.nb=ttk.Notebook(self.root,style="Navigation.TNotebook"); self.nb.pack(fill="both",expand=True,padx=16,pady=(0,8))
         self.tab_mes=ttk.Frame(self.nb,padding=12)
         self.tab_oc=ttk.Frame(self.nb,padding=12); self.tab_rel=ttk.Frame(self.nb,padding=12)
         self.nb.add(self.tab_mes,text="Lançamentos mensais")
         self.nb.add(self.tab_oc,text="Inquilinos")
-        self.nb.add(self.tab_rel,text="Relatórios e backup")
+        self.nb.add(self.tab_rel,text="Relatórios" if self.embutido else "Relatórios e backup")
         self.tab_sobre=ttk.Frame(self.nb,padding=12)
         self.nb.add(self.tab_sobre,text="Sobre")
         self.nb.bind("<<NotebookTabChanged>>",self.atualizar_navegacao)
         self.atualizar_navegacao()
         self.montar_mes(); self.montar_ocupantes(); self.montar_relatorios()
         self.montar_sobre()
-        footer=ttk.Frame(self.root,padding=(18,5),relief="sunken",borderwidth=1)
+        tk.Frame(self.root,bg=BORDA,height=1).pack(fill="x")
+        footer=ttk.Frame(self.root,padding=(18,6),style="Toolbar.TFrame")
         footer.pack(fill="x")
         ttk.Label(footer,text="REVISA | Energia e Água • Desenvolvedor: Jorge Alberto de Paula",style="Sub.TLabel").pack(side="left")
         ttk.Label(footer,text=f"Versão {APP_VERSION} | Dados locais",style="Sub.TLabel").pack(side="right")
+
+    def criar_icone_senha(self):
+        from PIL import Image, ImageDraw, ImageTk
+        imagem=Image.new("RGBA",(64,64))
+        desenho=ImageDraw.Draw(imagem)
+        desenho.arc((18,6,46,38),180,360,fill="#93a4bb",width=7)
+        desenho.line((18,22,18,30),fill="#93a4bb",width=7)
+        desenho.line((46,22,46,30),fill="#93a4bb",width=7)
+        desenho.rounded_rectangle((10,28,54,58),radius=7,fill="#4777ce",outline="#334b68",width=2)
+        desenho.ellipse((27,36,37,46),fill="#ffffff")
+        desenho.line((32,44,32,52),fill="#ffffff",width=4)
+        return ImageTk.PhotoImage(imagem.resize((24,24),Image.Resampling.LANCZOS),master=self.root)
 
     def criar_icones_navegacao(self):
         from PIL import Image, ImageDraw, ImageTk
@@ -618,7 +722,7 @@ class App:
             planilha,text="",font=("Segoe UI",13,"bold")
         )
         self.lbl_mes_planilha.pack(anchor="w",pady=(0,8))
-        tabela=tk.Frame(planilha,bg="#f3f5f7")
+        tabela=tk.Frame(planilha,bg=FUNDO)
         tabela.pack(fill="both",expand=True)
         tabela.columnconfigure(0,weight=1)
         tabela.rowconfigure(0,weight=1)
@@ -640,8 +744,8 @@ class App:
         self.lanc.bind("<Double-1>",lambda e:self.editar_lancamento())
         legenda=ttk.Frame(planilha)
         legenda.pack(fill="x",pady=(6,0))
-        tk.Label(legenda,text="  Quitado / sem saldo  ",bg="#f3f5f7",fg="#145da0",font=("Segoe UI",10,"bold")).pack(side="left",padx=(0,8))
-        tk.Label(legenda,text="  Em aberto (inclusive parcial)  ",bg="#f3f5f7",fg="#b02020",font=("Segoe UI",10,"bold")).pack(side="left")
+        tk.Label(legenda,text="  Quitado / sem saldo  ",bg="#ffffff",fg="#145da0",font=("Segoe UI",10,"bold")).pack(side="left",padx=(0,8))
+        tk.Label(legenda,text="  Em aberto (inclusive parcial)  ",bg="#ffffff",fg="#b02020",font=("Segoe UI",10,"bold")).pack(side="left")
         self.lbl_total=ttk.Label(planilha,text="Selecione um mês para começar.",font=("Segoe UI",11,"bold"));self.lbl_total.pack(anchor="w",pady=8)
         despesas=ttk.Frame(planilha)
         despesas.pack(fill="x",pady=(4,0))
@@ -681,7 +785,7 @@ class App:
                  "As mudanças de cobrança valem do mês selecionado em diante.",
             wraplength=1100,
         ).pack(anchor="w",pady=(0,4))
-        tabela=tk.Frame(self.tab_oc,bg="#f3f5f7")
+        tabela=tk.Frame(self.tab_oc,bg=FUNDO)
         tabela.pack(fill="both",expand=True,pady=10)
         colunas=("id","nome","observacoes")+tuple(f"cobrar_{chave}" for chave,_ in COBRANCAS)+("status",)
         self.oc_tree=ttk.Treeview(
@@ -713,13 +817,15 @@ class App:
         self.oc_tree.bind("<Button-1>",self.editar_celula_inquilino)
 
     def montar_relatorios(self):
-        ttk.Label(self.tab_rel,text="Relatórios e segurança",font=("Segoe UI",16,"bold")).pack(anchor="w",pady=(0,10))
+        title = "Relatórios" if self.embutido else "Relatórios e segurança"
+        ttk.Label(self.tab_rel,text=title,font=("Segoe UI",16,"bold")).pack(anchor="w",pady=(0,10))
         ttk.Label(self.tab_rel,text="Os dados ficam no seu computador, em um banco SQLite. O programa não importa os anos anteriores automaticamente.").pack(anchor="w",pady=4)
         f=ttk.Frame(self.tab_rel);f.pack(anchor="w",pady=10)
         ttk.Button(f,text="Gerar relatório em PDF",command=self.dialogo_relatorio_pdf).pack(side="left",padx=(0,8))
-        ttk.Button(f,text="Criar backup do banco",command=self.backup_como).pack(side="left",padx=8)
-        ttk.Button(f,text="Abrir pasta de dados",command=self.abrir_pasta).pack(side="left",padx=8)
-        ttk.Button(f,text="Alterar senha",command=lambda:solicitar_acesso(self.root,alterar=True)).pack(side="left",padx=8)
+        if not self.embutido:
+            ttk.Button(f,text="Criar backup do banco",command=self.backup_como).pack(side="left",padx=8)
+            ttk.Button(f,text="Abrir pasta de dados",command=self.abrir_pasta).pack(side="left",padx=8)
+            ttk.Button(f,text="Alterar senha",command=lambda:solicitar_acesso(self.root,alterar=True)).pack(side="left",padx=8)
         ttk.Label(self.tab_rel,text=f"Banco de dados atual: {DB_PATH}",wraplength=1000).pack(anchor="w",pady=15)
 
     def garantir_mes(self,ano,mes):
@@ -1722,12 +1828,25 @@ class App:
                 f"{NOMES_MESES[mes-1].upper()} DE {ano} — {nome}: {moeda(total)}"
                 for (ano,mes,nome),total in sorted(totais.items())
             )
-            self.aviso_aberto.config(
-                text=f"ATEN\u00c7\u00c3O: em aberto\n{periodos}"
-            )
-            self.aviso_aberto.pack(before=self.nb,fill="x",padx=16,pady=(0,6))
+            total_aberto=sum(totais.values())
+            if self.embutido:
+                self.aviso_aberto.config(
+                    text=f"ATENÇÃO: {len(totais)} em aberto • {moeda(total_aberto)}"
+                )
+                self.aviso_detalhes_aberto = f"Valores vencidos em aberto:\n\n{periodos}"
+                self.aviso_aberto.pack(side="left", padx=(8, 0), pady=2)
+            else:
+                self.aviso_aberto.config(text=f"ATENÇÃO: em aberto\n{periodos}")
+                self.aviso_aberto.pack(before=self.nb,fill="x",padx=16,pady=(0,6))
         else:
             self.aviso_aberto.pack_forget()
+            if self.embutido:
+                self.aviso_detalhes_aberto = ""
+
+    def mostrar_detalhes_aberto(self,_evento=None):
+        detalhes=getattr(self,"aviso_detalhes_aberto","")
+        if detalhes:
+            messagebox.showinfo("Valores em aberto",detalhes,parent=self.root)
 
     def atualizar_lancamentos(self):
         self.atualizar_aviso_aberto()
@@ -2160,8 +2279,16 @@ class App:
         try:os.startfile(str(PASTA))
         except Exception:messagebox.showinfo("Pasta de dados",str(PASTA))
 
+    def encerrar(self):
+        conn=getattr(self,"conn",None)
+        if conn is None:return
+        try:conn.commit()
+        finally:
+            conn.close()
+            self.conn=None
+
     def fechar(self):
-        try:self.conn.commit();self.conn.close()
+        try:self.encerrar()
         finally:self.root.destroy()
 
 def main():
@@ -2174,7 +2301,7 @@ def main():
     root=tk.Tk()
     root.withdraw()
     configurar_icone_aplicativo(root)
-    if "--central-authenticated" not in sys.argv and not solicitar_acesso(root):
+    if not solicitar_acesso(root):
         root.destroy()
         return
     app=App(root)

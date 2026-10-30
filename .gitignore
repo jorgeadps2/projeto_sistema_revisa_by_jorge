@@ -1,4 +1,5 @@
 # Dados locais e documentos dos sistemas
+Banco de Dados Sistema/
 *.db
 *.db-*
 *.sqlite

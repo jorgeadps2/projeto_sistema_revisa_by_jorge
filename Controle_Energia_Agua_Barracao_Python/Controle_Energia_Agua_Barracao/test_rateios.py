@@ -12,6 +12,7 @@ import controle_energia_agua as sistema
 class RateiosTest(unittest.TestCase):
     def setUp(self):
         self.app = sistema.App.__new__(sistema.App)
+        self.app.embutido = False
         self.app.conn = sqlite3.connect(":memory:")
         self.app.conn.row_factory = sqlite3.Row
         self.addCleanup(self.app.conn.close)
@@ -499,7 +500,7 @@ class RateiosTest(unittest.TestCase):
                 yield from textos(filho)
         self.assertFalse(any("Energia =" in texto for texto in textos(self.app.tab_mes)))
 
-    def test_tema_claro_em_todas_as_abas_preserva_destaques(self):
+    def test_tema_escuro_em_todas_as_abas_preserva_destaques(self):
         root=sistema.tk.Tk()
         self.addCleanup(root.destroy)
         root.withdraw()
@@ -507,13 +508,16 @@ class RateiosTest(unittest.TestCase):
         self.app.configurar_estilo()
         self.app.montar()
         estilo=sistema.ttk.Style(root)
-        self.assertEqual(root["background"],"#f3f5f7")
+        self.assertEqual(root["background"].lower(),sistema.FUNDO.lower())
         for nome in ("TFrame","TLabel","TLabelframe","TLabelframe.Label","TNotebook"):
-            self.assertEqual(estilo.lookup(nome,"background"),"#f3f5f7")
+            self.assertEqual(estilo.lookup(nome,"background").lower(),sistema.FUNDO.lower())
+        self.assertEqual(estilo.lookup("TLabel","foreground").lower(),sistema.TEXTO_CLARO.lower())
         self.assertEqual(estilo.lookup("Treeview","fieldbackground"),"#ffffff")
         self.assertEqual(estilo.lookup("Treeview","background",("selected",)),"#dce7f0")
         self.assertEqual(estilo.lookup("TCombobox","fieldbackground",("readonly",)),"#ffffff")
-        self.assertEqual(estilo.lookup("TNotebook.Tab","background",("selected",)),"#ffe59a")
+        self.assertEqual(estilo.lookup("TNotebook.Tab","background",("selected",)).lower(),sistema.AZUL.lower())
+        self.assertEqual(str(self.app.botao_alterar_senha["text"]),"Alterar senha")
+        self.assertEqual((self.app.icone_senha.width(),self.app.icone_senha.height()),(24,24))
         self.assertEqual(self.app.lanc.tag_configure("pago")["foreground"],"#145da0")
         self.assertEqual(self.app.lanc.tag_configure("em_aberto")["foreground"],"#b02020")
         def verificar(widget):
@@ -523,12 +527,12 @@ class RateiosTest(unittest.TestCase):
                 verificar(filho)
         verificar(root)
         self.assertEqual(self.app.nb["style"],"Navigation.TNotebook")
-        self.assertEqual(len(self.app.icones_navegacao),4)
+        self.assertEqual(len(self.app.icones_navegacao),5)
         for icone in self.app.icones_navegacao:
             self.assertEqual((icone.width(),icone.height()),(24,24))
-        self.assertEqual(estilo.lookup("ToolbarSelected.TButton","background"),"#ff4500")
-        self.assertEqual(estilo.lookup("ToolbarSelected.TButton","background",("active",)),"#ff642b")
-        self.assertEqual(estilo.lookup("ToolbarSelected.TButton","background",("pressed",)),"#e63e00")
+        self.assertEqual(estilo.lookup("ToolbarSelected.TButton","background").lower(),sistema.AZUL.lower())
+        self.assertEqual(estilo.lookup("ToolbarSelected.TButton","background",("active",)).lower(),sistema.AZUL_ESCURO.lower())
+        self.assertEqual(estilo.lookup("ToolbarSelected.TButton","background",("pressed",)).lower(),sistema.AZUL_ESCURO.lower())
         for indice,titulo in enumerate(("Lançamentos mensais","Inquilinos","Relatórios e backup")):
             self.assertEqual(str(self.app.botoes_navegacao[indice]["compound"]),"top")
             self.assertTrue(self.app.botoes_navegacao[indice]["image"])
@@ -1230,12 +1234,17 @@ class AcessoTest(unittest.TestCase):
     def test_cancelar_ou_falhar_login_nao_abre_aplicacao(self):
         root=Mock()
         with patch.object(sistema.tk,"Tk",return_value=root), \
+             patch.object(sistema.sys,"platform","test"), \
+             patch.object(sistema.sys,"argv",[
+                 "app","--central-authenticated","--revisa-auth-pipe=untrusted"
+             ]), \
              patch.object(sistema,"configurar_icone_aplicativo") as configurar_icone, \
-             patch.object(sistema,"solicitar_acesso",return_value=False), \
+             patch.object(sistema,"solicitar_acesso",return_value=False) as solicitar_acesso, \
              patch.object(sistema,"App") as app:
             sistema.main()
         root.withdraw.assert_called_once()
         configurar_icone.assert_called_once_with(root)
+        solicitar_acesso.assert_called_once_with(root)
         root.destroy.assert_called_once()
         root.deiconify.assert_not_called()
         root.mainloop.assert_not_called()

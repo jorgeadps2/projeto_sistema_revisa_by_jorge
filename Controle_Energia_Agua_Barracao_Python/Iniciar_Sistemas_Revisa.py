@@ -31,16 +31,21 @@ SIGNING_CONFIG_PATH = (
     / "assinatura_digital.json"
 )
 PASSWORD_ITERATIONS = 600_000
-CENTRAL_ACCESS_ARGUMENT = "--central-authenticated"
 CENTRAL_VERSION = "1.0"
 
-BLUE = "#004B97"
-BLUE_DARK = "#073365"
+BLUE = "#3B82F6"
+BLUE_DARK = "#1D4ED8"
 ORANGE = "#FF6500"
-BACKGROUND = "#F3F6FA"
-TEXT = "#192B43"
-MUTED = "#65758B"
-TOOLBAR = "#ECECEC"
+BACKGROUND = "#0B1220"
+SURFACE = "#111C2E"
+SURFACE_ALT = "#16243A"
+BORDER = "#24344D"
+TEXT = "#E6EDF7"
+MUTED = "#8FA3BF"
+TOOLBAR = "#0E1726"
+ACCENT = "#2563EB"
+ACCENT_HOVER = "#1E40AF"
+SIDEBAR_HOVER = "#1A2840"
 COMPANY_NAME = "FTS DISTRIBUIDORA DE PEÇAS LTDA"
 CENTRAL_USER = "JORGE"
 
@@ -122,7 +127,7 @@ def verify_payroll_password(password, database_path=PAYROLL_DB):
 def signing_expiry_display(today=None):
     unavailable = (
         "Assinatura digital: validade indisponível",
-        MUTED,
+        "#475569",
         "#F7F9FC",
     )
     try:
@@ -205,6 +210,7 @@ class Launcher(tk.Tk):
         self.window_icon = ImageTk.PhotoImage(icon, master=self)
         self.iconphoto(True, self.window_icon)
         self.iconbitmap(str(BASE_DIR / "assets" / "revisa.ico"))
+        self._configure_dark_style()
         if not self._authenticate():
             self.destroy()
             return
@@ -213,132 +219,147 @@ class Launcher(tk.Tk):
         self.deiconify()
         self.state("zoomed")
 
+    def _configure_dark_style(self):
+        style = ttk.Style(self)
+        try:
+            style.theme_use("clam")
+        except tk.TclError:
+            pass
+        style.configure(
+            "Login.TEntry",
+            padding=(10, 8),
+            fieldbackground=SURFACE_ALT,
+            foreground=TEXT,
+            insertcolor=TEXT,
+            bordercolor=BORDER,
+            lightcolor=BORDER,
+            darkcolor=BORDER,
+        )
+        style.map(
+            "Login.TEntry",
+            bordercolor=[("focus", BLUE)],
+            lightcolor=[("focus", BLUE)],
+        )
+        style.configure(
+            "Login.TCombobox",
+            padding=(8, 7),
+            fieldbackground=SURFACE_ALT,
+            background=SURFACE_ALT,
+            foreground=TEXT,
+            arrowcolor=TEXT,
+            bordercolor=BORDER,
+            lightcolor=BORDER,
+            darkcolor=BORDER,
+        )
+        style.map(
+            "Login.TCombobox",
+            fieldbackground=[("readonly", SURFACE_ALT)],
+            background=[("readonly", SURFACE_ALT)],
+            foreground=[("readonly", TEXT)],
+            selectbackground=[("readonly", SURFACE_ALT)],
+            selectforeground=[("readonly", TEXT)],
+        )
+        self.option_add("*TCombobox*Listbox.background", SURFACE_ALT)
+        self.option_add("*TCombobox*Listbox.foreground", TEXT)
+        self.option_add("*TCombobox*Listbox.selectBackground", ACCENT)
+        self.option_add("*TCombobox*Listbox.selectForeground", "white")
+
     def _authenticate(self):
         login = tk.Toplevel(self)
         login.title("Acesso ao Sistema")
-        login.geometry("720x360")
         login.resizable(False, False)
-        login.configure(bg="#E8EDF3")
+        login.configure(bg=BACKGROUND)
         login.iconphoto(True, self.window_icon)
         login.iconbitmap(str(BASE_DIR / "assets" / "revisa.ico"))
         login.protocol("WM_DELETE_WINDOW", login.destroy)
 
-        banner = tk.Frame(login, bg=BLUE_DARK, height=72)
-        banner.pack(fill="x")
-        banner.pack_propagate(False)
-        tk.Label(
-            banner,
-            text="REVISA",
-            bg=BLUE_DARK,
-            fg="white",
-            font=("Segoe UI", 21, "bold"),
-        ).pack(side="left", padx=(24, 14), pady=18)
-        tk.Frame(banner, bg=ORANGE, width=4).pack(
-            side="left", fill="y", pady=17
-        )
-        tk.Label(
-            banner,
-            text="Gerenciador Administrativo",
-            bg=BLUE_DARK,
-            fg="#DCEBFA",
-            font=("Segoe UI", 12, "bold"),
-        ).pack(side="left", padx=14)
-        tk.Frame(login, bg=ORANGE, height=4).pack(fill="x")
-
-        body = tk.Frame(login, bg="#F4F6F9", padx=14, pady=10)
-        logo_panel = tk.Frame(
-            body,
-            bg="white",
-            width=138,
-            height=138,
-            highlightbackground="#D6DEE8",
+        tk.Frame(login, bg=ACCENT, height=4).pack(fill="x")
+        card = tk.Frame(
+            login,
+            bg=SURFACE,
+            highlightbackground=BORDER,
             highlightthickness=1,
+            padx=28,
+            pady=22,
         )
-        logo_panel.pack(side="left", anchor="n", padx=(0, 14))
-        logo_panel.pack_propagate(False)
-        logo_size = self.logo_source.copy()
-        logo_size.thumbnail((120, 120), Image.Resampling.LANCZOS)
-        self.login_logo = ImageTk.PhotoImage(logo_size, master=login)
-        tk.Label(logo_panel, image=self.login_logo, bg="white").pack(
-            expand=True, padx=8, pady=8
-        )
+        card.pack(fill="both", expand=True, padx=18, pady=18)
 
-        form = tk.Frame(body, bg="#F4F6F9")
-        form.pack(side="left", fill="both", expand=True)
-        style = ttk.Style(login)
-        style.configure(
-            "Login.TEntry",
-            padding=(8, 7),
-            fieldbackground="white",
-            font=("Segoe UI", 10),
+        header = tk.Frame(card, bg=SURFACE)
+        header.pack(fill="x")
+        logo = self.logo_source.copy()
+        logo.thumbnail((64, 64), Image.Resampling.LANCZOS)
+        self.login_logo = ImageTk.PhotoImage(logo, master=login)
+        tk.Label(header, image=self.login_logo, bg=SURFACE).pack(
+            side="left", padx=(0, 12)
         )
-        style.configure(
-            "Login.TCombobox",
-            padding=(6, 6),
-            fieldbackground="white",
-            font=("Segoe UI", 10),
-        )
+        titles = tk.Frame(header, bg=SURFACE)
+        titles.pack(side="left", fill="x")
         tk.Label(
-            form,
-            text="Empresa",
-            bg="#F4F6F9",
+            titles,
+            text="REVISA",
+            bg=SURFACE,
             fg=TEXT,
-            font=("Segoe UI", 9, "bold"),
-        ).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 4))
+            font=("Segoe UI", 18, "bold"),
+        ).pack(anchor="w")
+        tk.Label(
+            titles,
+            text="Gerenciador Administrativo",
+            bg=SURFACE,
+            fg=MUTED,
+            font=("Segoe UI", 10),
+        ).pack(anchor="w")
+        tk.Frame(card, bg=BORDER, height=1).pack(fill="x", pady=(16, 6))
+
+        def field_label(text):
+            tk.Label(
+                card,
+                text=text,
+                bg=SURFACE,
+                fg=MUTED,
+                font=("Segoe UI Semibold", 9),
+            ).pack(anchor="w", pady=(10, 4))
+
+        field_label("Empresa")
         company = ttk.Combobox(
-            form,
+            card,
             values=(COMPANY_NAME,),
             state="readonly",
             style="Login.TCombobox",
+            width=38,
         )
         company.current(0)
-        company.grid(row=1, column=0, columnspan=3, sticky="ew")
+        company.pack(fill="x")
 
-        tk.Label(
-            form,
-            text="Usuário",
-            bg="#F4F6F9",
-            fg=TEXT,
-            font=("Segoe UI", 9, "bold"),
-        ).grid(row=2, column=0, sticky="w", pady=(12, 4))
-        tk.Label(
-            form,
-            text="Senha",
-            bg="#F4F6F9",
-            fg=TEXT,
-            font=("Segoe UI", 9, "bold"),
-        ).grid(row=2, column=1, columnspan=2, sticky="w", padx=(8, 0), pady=(12, 4))
+        field_label("Usuário")
         username = ttk.Combobox(
-            form,
+            card,
             values=(CENTRAL_USER,),
             state="readonly",
             style="Login.TCombobox",
-            width=20,
         )
         username.current(0)
-        username.grid(row=3, column=0, sticky="ew")
+        username.pack(fill="x")
+
+        field_label("Senha")
         password = tk.StringVar()
         password_entry = ttk.Entry(
-            form,
+            card,
             textvariable=password,
             show="*",
             style="Login.TEntry",
         )
-        password_entry.grid(row=3, column=1, sticky="ew", padx=(8, 8))
-        form.columnconfigure(0, weight=3)
-        form.columnconfigure(1, weight=2)
-        form.columnconfigure(2, weight=0)
+        password_entry.pack(fill="x")
 
         message = tk.StringVar()
         tk.Label(
-            form,
+            card,
             textvariable=message,
-            bg="#F4F6F9",
-            fg="#B91C1C",
-            wraplength=480,
+            bg=SURFACE,
+            fg="#F87171",
+            wraplength=340,
             justify="left",
             font=("Segoe UI", 9),
-        ).grid(row=4, column=0, columnspan=3, sticky="w", pady=(8, 0))
+        ).pack(anchor="w", pady=(8, 0))
 
         authenticated = {"value": False}
 
@@ -361,69 +382,43 @@ class Launcher(tk.Tk):
             login.destroy()
 
         tk.Button(
-            form,
-            text="▶  Entrar",
+            card,
+            text="Entrar",
             command=submit,
-            bg="#168447",
+            bg=ACCENT,
             fg="white",
-            activebackground="#116D39",
+            activebackground=ACCENT_HOVER,
             activeforeground="white",
             relief="flat",
+            borderwidth=0,
             cursor="hand2",
-            font=("Segoe UI", 10, "bold"),
-            padx=14,
-            pady=8,
-        ).grid(row=3, column=2, sticky="ew")
+            font=("Segoe UI Semibold", 11),
+            pady=9,
+        ).pack(fill="x", pady=(10, 0))
         password_entry.bind("<Return>", submit)
         login.bind("<Escape>", lambda event: login.destroy())
 
-        footer = tk.Frame(login, bg="white", height=84)
-        footer.pack(side="bottom", fill="x", padx=10, pady=(0, 8))
-        footer.pack_propagate(False)
-        tk.Frame(footer, bg="#D6DEE8", height=1).pack(fill="x")
-        footer_content = tk.Frame(footer, bg="white")
-        footer_content.pack(fill="both", expand=True, padx=5)
-        footer_items = (
-            ("SISTEMAS REVISA", "Folha de pagamento\nEnergia e água"),
-            ("ACESSO PROTEGIDO", "Entre com sua senha\nde administrador"),
-            ("VALIDADE E VERSÃO", f"Gerenciador Administrativo\nVersão {CENTRAL_VERSION}"),
-        )
-        for column, (heading, detail) in enumerate(footer_items):
-            footer_content.columnconfigure(column, weight=1, uniform="login_footer")
-            panel = tk.Frame(
-                footer_content,
-                bg="#F7F9FC",
-                highlightbackground="#D6DEE8",
-                highlightthickness=1,
-            )
-            panel.grid(row=0, column=column, sticky="nsew", padx=3, pady=(4, 2))
-            tk.Label(
-                panel,
-                text=heading,
-                bg="#F7F9FC",
-                fg=BLUE_DARK,
-                font=("Segoe UI", 8, "bold"),
-            ).pack(anchor="w", padx=7, pady=(4, 1))
-            tk.Label(
-                panel,
-                text=detail,
-                bg="#F7F9FC",
-                fg=MUTED,
-                justify="left",
-                font=("Segoe UI", 8),
-            ).pack(anchor="w", padx=7)
         tk.Label(
-            footer_content,
-            text="Desenvolvido por: Jorge Alberto de Paula",
-            bg="white",
-            fg=BLUE_DARK,
-            font=("Segoe UI", 8, "bold"),
-        ).grid(row=1, column=0, columnspan=3, sticky="w", padx=5, pady=(1, 0))
+            card,
+            text="Acesso protegido • use a senha de administrador",
+            bg=SURFACE,
+            fg=MUTED,
+            font=("Segoe UI", 8),
+        ).pack(anchor="center", pady=(14, 0))
+        tk.Label(
+            card,
+            text=(
+                "Desenvolvido por: Jorge Alberto de Paula  •  "
+                f"Versão {CENTRAL_VERSION}"
+            ),
+            bg=SURFACE,
+            fg=MUTED,
+            font=("Segoe UI", 8),
+        ).pack(anchor="center", pady=(2, 0))
 
-        body.pack(fill="both", expand=True)
         login.update_idletasks()
-        x = max(0, (login.winfo_screenwidth() - login.winfo_width()) // 2)
-        y = max(0, (login.winfo_screenheight() - login.winfo_height()) // 2)
+        x = max(0, (login.winfo_screenwidth() - login.winfo_reqwidth()) // 2)
+        y = max(0, (login.winfo_screenheight() - login.winfo_reqheight()) // 2)
         login.geometry(f"+{x}+{y}")
         login.lift()
         login.focus_force()
@@ -434,34 +429,104 @@ class Launcher(tk.Tk):
 
     def _build(self):
         self._build_menu()
-        toolbar = tk.Frame(self, bg=TOOLBAR, height=62, relief="raised", borderwidth=1)
-        toolbar.pack(fill="x")
-        toolbar.pack_propagate(False)
+        self._build_status_bar()
         self.toolbar_images = {}
         self.toolbar_buttons = {}
+        self.selected_program = None
+
+        sidebar = tk.Frame(self, bg=TOOLBAR, width=236)
+        sidebar.pack(side="left", fill="y")
+        sidebar.pack_propagate(False)
+        tk.Frame(self, bg=BORDER, width=1).pack(side="left", fill="y")
+
+        brand = tk.Frame(sidebar, bg=TOOLBAR)
+        brand.pack(fill="x", padx=18, pady=(20, 6))
+        brand_logo = self.logo_source.copy()
+        brand_logo.thumbnail((40, 40), Image.Resampling.LANCZOS)
+        self.sidebar_logo = ImageTk.PhotoImage(brand_logo, master=self)
+        tk.Label(brand, image=self.sidebar_logo, bg=TOOLBAR).pack(
+            side="left", padx=(0, 10)
+        )
+        brand_text = tk.Frame(brand, bg=TOOLBAR)
+        brand_text.pack(side="left")
+        tk.Label(
+            brand_text,
+            text="REVISA",
+            bg=TOOLBAR,
+            fg=TEXT,
+            font=("Segoe UI", 14, "bold"),
+        ).pack(anchor="w")
+        tk.Label(
+            brand_text,
+            text="Gerenciador Administrativo",
+            bg=TOOLBAR,
+            fg=MUTED,
+            font=("Segoe UI", 8),
+        ).pack(anchor="w")
+        tk.Frame(sidebar, bg=BORDER, height=1).pack(fill="x", padx=16, pady=(12, 14))
+        tk.Label(
+            sidebar,
+            text="SISTEMAS",
+            bg=TOOLBAR,
+            fg=MUTED,
+            font=("Segoe UI Semibold", 8),
+        ).pack(anchor="w", padx=22, pady=(0, 6))
         self._toolbar_button(
-            toolbar, "Folha de pagamento", self.open_payroll, BLUE, "payroll"
+            sidebar, "Folha de pagamento", self.open_payroll, BLUE, "payroll"
         )
         self._toolbar_button(
-            toolbar, "Energia e água", self.open_energy, ORANGE, "energy"
+            sidebar, "Energia e água", self.open_energy, ORANGE, "energy"
         )
-        tk.Frame(toolbar, bg="#B8B8B8", width=1).pack(
-            side="left", fill="y", padx=5, pady=5
+        self._toolbar_button(
+            sidebar, "Sair", self._close_launcher, BLUE_DARK, "exit", side="bottom"
         )
-        self._toolbar_button(toolbar, "Sair", self._close_launcher, BLUE_DARK, "exit")
+        tk.Frame(sidebar, bg=BORDER, height=1).pack(
+            side="bottom", fill="x", padx=16, pady=(10, 6)
+        )
         self.signature_expiry_label = tk.Label(
-            toolbar,
+            sidebar,
             text="",
-            anchor="e",
+            anchor="w",
+            justify="left",
+            wraplength=184,
             padx=10,
-            font=("Segoe UI", 9, "bold"),
+            pady=8,
+            font=("Segoe UI", 8, "bold"),
         )
-        self.signature_expiry_label.pack(side="right", fill="y", padx=8)
+        self.signature_expiry_label.pack(side="bottom", fill="x", padx=16)
+        tk.Label(
+            sidebar,
+            text="CERTIFICADO DIGITAL",
+            bg=TOOLBAR,
+            fg=MUTED,
+            font=("Segoe UI Semibold", 8),
+        ).pack(side="bottom", anchor="w", padx=22, pady=(0, 6))
         self._refresh_signature_expiry()
-        self._build_status_bar()
+
+        main = tk.Frame(self, bg=BACKGROUND)
+        main.pack(side="left", fill="both", expand=True)
+        header = tk.Frame(main, bg=BACKGROUND, height=64)
+        header.pack(fill="x", padx=24)
+        header.pack_propagate(False)
+        self.page_title = tk.Label(
+            header,
+            text="Painel inicial",
+            bg=BACKGROUND,
+            fg=TEXT,
+            font=("Segoe UI Semibold", 16),
+        )
+        self.page_title.pack(side="left", pady=(14, 0))
+        tk.Label(
+            header,
+            text=COMPANY_NAME,
+            bg=BACKGROUND,
+            fg=MUTED,
+            font=("Segoe UI", 9),
+        ).pack(side="right", pady=(18, 0))
+        tk.Frame(main, bg=BORDER, height=1).pack(fill="x", padx=24)
 
         self.home_canvas = tk.Canvas(
-            self,
+            main,
             bg=BACKGROUND,
             highlightthickness=0,
             borderwidth=0,
@@ -499,20 +564,12 @@ class Launcher(tk.Tk):
         menu_bar.add_cascade(label="Ajuda", menu=help_menu)
         self.config(menu=menu_bar)
 
-    def _toolbar_button(self, parent, label, command, accent, icon_name):
+    def _icon_image(self, icon_name, size, tile):
         icon = Image.new("RGBA", (72, 72), "#00000000")
         draw = ImageDraw.Draw(icon)
-        draw.rounded_rectangle((3, 3, 69, 69), radius=17, fill="#FFFFFF")
-        draw.rounded_rectangle(
-            (3, 3, 69, 69),
-            radius=17,
-            outline=f"{accent}35",
-            width=2,
-        )
+        draw.rounded_rectangle((3, 3, 69, 69), radius=17, fill=tile)
         if icon_name == "payroll":
-            draw.rounded_rectangle(
-                (13, 9, 53, 61), radius=6, fill="#2563EB"
-            )
+            draw.rounded_rectangle((13, 9, 53, 61), radius=6, fill="#2563EB")
             draw.rounded_rectangle((18, 14, 48, 55), radius=3, fill="#EFF6FF")
             draw.rounded_rectangle((24, 6, 42, 17), radius=3, fill="#38BDF8")
             draw.line((24, 26, 42, 26), fill="#60A5FA", width=3)
@@ -529,44 +586,61 @@ class Launcher(tk.Tk):
                 fill="#FBBF24", outline="#F97316", width=2,
             )
         else:
-            draw.rounded_rectangle(
-                (13, 11, 42, 61), radius=5, fill="#334155"
-            )
+            draw.rounded_rectangle((13, 11, 42, 61), radius=5, fill="#64748B")
             draw.rounded_rectangle((18, 16, 36, 56), radius=2, fill="#93C5FD")
-            draw.line((30, 36, 61, 36), fill="#F97316", width=7)
-            draw.line((49, 24, 61, 36, 49, 48), fill="#F97316", width=7)
-        icon = icon.resize((42, 42), Image.Resampling.LANCZOS)
-        self.toolbar_images[icon_name] = ImageTk.PhotoImage(icon, master=self)
+            draw.line((30, 36, 61, 36), fill="#F87171", width=7)
+            draw.line((49, 24, 61, 36, 49, 48), fill="#F87171", width=7)
+        return icon.resize((size, size), Image.Resampling.LANCZOS)
+
+    def _toolbar_button(self, parent, label, command, accent, icon_name, side="top"):
+        self.toolbar_images[icon_name] = ImageTk.PhotoImage(
+            self._icon_image(icon_name, 30, SURFACE_ALT), master=self
+        )
         button = tk.Button(
             parent,
-            text=label,
+            text=f"  {label}",
             image=self.toolbar_images[icon_name],
             command=command,
             bg=TOOLBAR,
             fg=TEXT,
-            activebackground="#DCDCDC",
+            activebackground=SIDEBAR_HOVER,
             activeforeground=TEXT,
             relief="flat",
             borderwidth=0,
             cursor="hand2",
-            font=("Segoe UI", 9),
-            padx=10,
-            pady=4,
+            font=("Segoe UI Semibold", 10),
+            anchor="w",
+            padx=12,
+            pady=7,
             compound="left",
             highlightthickness=0,
         )
-        button.pack(side="left", fill="y", padx=2)
+        pack_options = {"pady": (0, 14)} if side == "bottom" else {"pady": 2}
+        button.pack(side=side, fill="x", padx=12, **pack_options)
+
+        def hover(_event, inside):
+            if self.toolbar_buttons.get(getattr(self, "selected_program", None)) is button:
+                return
+            button.configure(bg=SIDEBAR_HOVER if inside else TOOLBAR)
+
+        button.bind("<Enter>", lambda event: hover(event, True))
+        button.bind("<Leave>", lambda event: hover(event, False))
         self.toolbar_buttons[icon_name] = button
 
     def _highlight_program(self, program):
+        self.selected_program = program
         for name, button in self.toolbar_buttons.items():
             selected = name == program
             button.configure(
-                bg=ORANGE if selected else TOOLBAR,
+                bg=ACCENT if selected else TOOLBAR,
                 fg="white" if selected else TEXT,
-                activebackground="#E95B00" if selected else "#DCDCDC",
+                activebackground=ACCENT_HOVER if selected else SIDEBAR_HOVER,
                 activeforeground="white" if selected else TEXT,
             )
+        titles = {"payroll": "Folha de pagamento", "energy": "Energia e água"}
+        page_title = getattr(self, "page_title", None)
+        if page_title is not None:
+            page_title.configure(text=titles.get(program, "Painel inicial"))
 
     def _check_active_program(self):
         if (
@@ -637,37 +711,126 @@ class Launcher(tk.Tk):
 
         canvas = self.home_canvas
         canvas.delete("all")
-        panel_width = min(int(width * 0.48), height - 8, 680)
-        panel_left = (width - panel_width) // 2
-        canvas.create_rectangle(
-            panel_left,
-            0,
-            panel_left + panel_width,
-            height,
-            fill="white",
-            outline="",
+        self.card_images = {}
+        margin = 28
+        card_width = max(220, min(400, (width - margin * 3) // 2))
+        card_height = 200
+        left = max(margin, (width - (card_width * 2 + margin)) // 2)
+        top = max(96, int(height * 0.16))
+
+        canvas.create_text(
+            left,
+            top - 58,
+            text=f"Bem-vindo, {CENTRAL_USER.title()}",
+            anchor="w",
+            fill=TEXT,
+            font=("Segoe UI Semibold", 18),
+        )
+        canvas.create_text(
+            left,
+            top - 28,
+            text="Escolha um sistema para começar. Ele será aberto nesta área.",
+            anchor="w",
+            fill=MUTED,
+            font=("Segoe UI", 10),
         )
 
-        diameter = min(panel_width - 8, height - 12)
-        logo_size = int(diameter * 0.98)
-        resized_logo = self.logo_source.copy()
-        resized_logo.thumbnail((logo_size, logo_size), Image.Resampling.LANCZOS)
-        self.logo_image = ImageTk.PhotoImage(resized_logo, master=canvas)
-        canvas.create_image(
-            width // 2,
-            height // 2,
-            image=self.logo_image,
-            anchor="center",
+        cards = (
+            (
+                "payroll",
+                "Folha de pagamento",
+                "Colaboradores, salários, folha mensal,\n"
+                "proventos, descontos e relatórios.",
+                self.open_payroll,
+            ),
+            (
+                "energy",
+                "Energia e água",
+                "Leituras, rateios entre inquilinos,\n"
+                "recebimentos, relatórios e backup.",
+                self.open_energy,
+            ),
         )
+        for index, (name, title, detail, command) in enumerate(cards):
+            x = left + index * (card_width + margin)
+            y = top
+            tag = f"card_{name}"
+            outline_tag = f"{tag}_outline"
+            self._round_rect(
+                canvas, x, y, x + card_width, y + card_height, 16,
+                fill=SURFACE, outline=BORDER, width=1, tags=(tag, outline_tag),
+            )
+            canvas.create_rectangle(
+                x + 18, y + 1, x + card_width - 18, y + 4,
+                fill=ACCENT, outline="", tags=tag,
+            )
+            self.card_images[name] = ImageTk.PhotoImage(
+                self._icon_image(name, 56, SURFACE_ALT), master=canvas
+            )
+            canvas.create_image(
+                x + 26, y + 26, image=self.card_images[name], anchor="nw", tags=tag
+            )
+            canvas.create_text(
+                x + 26, y + 104, text=title, anchor="nw", fill=TEXT,
+                font=("Segoe UI Semibold", 15), tags=tag,
+            )
+            canvas.create_text(
+                x + 26, y + 136, text=detail, anchor="nw", fill=MUTED,
+                font=("Segoe UI", 9), tags=tag,
+            )
+            canvas.create_text(
+                x + card_width - 24, y + 42, text="Abrir  ›", anchor="e",
+                fill=BLUE, font=("Segoe UI Semibold", 10), tags=tag,
+            )
+            canvas.tag_bind(tag, "<Button-1>", lambda _event, run=command: run())
+            canvas.tag_bind(
+                tag,
+                "<Enter>",
+                lambda _event, item=outline_tag: (
+                    canvas.itemconfigure(item, outline=BLUE, width=2),
+                    canvas.configure(cursor="hand2"),
+                ),
+            )
+            canvas.tag_bind(
+                tag,
+                "<Leave>",
+                lambda _event, item=outline_tag: (
+                    canvas.itemconfigure(item, outline=BORDER, width=1),
+                    canvas.configure(cursor=""),
+                ),
+            )
+
+        logo_space = height - (top + card_height) - 48
+        logo_size = min(logo_space, 220)
+        if logo_size >= 90:
+            resized_logo = self.logo_source.copy()
+            resized_logo.thumbnail((logo_size, logo_size), Image.Resampling.LANCZOS)
+            self.logo_image = ImageTk.PhotoImage(resized_logo, master=canvas)
+            canvas.create_image(
+                width // 2,
+                top + card_height + 24 + logo_space // 2,
+                image=self.logo_image,
+                anchor="center",
+            )
+
+    @staticmethod
+    def _round_rect(canvas, x1, y1, x2, y2, radius, **options):
+        points = (
+            x1 + radius, y1, x2 - radius, y1, x2, y1, x2, y1 + radius,
+            x2, y2 - radius, x2, y2, x2 - radius, y2, x1 + radius, y2,
+            x1, y2, x1, y2 - radius, x1, y1 + radius, x1, y1,
+        )
+        return canvas.create_polygon(points, smooth=True, **options)
 
     def _build_status_bar(self):
-        status = tk.Frame(self, bg="#D0D0D0", height=22)
+        status = tk.Frame(self, bg="#080E19", height=26)
         status.pack(fill="x", side="bottom")
         status.pack_propagate(False)
+        tk.Frame(status, bg=BORDER, height=1).place(relx=0, rely=0, relwidth=1)
 
         status_fields = (
-            ("FTS DISTRIBUIDORA DE PEÇAS LTDA", 3),
-            ("JORGE", 1),
+            (COMPANY_NAME, 3),
+            (CENTRAL_USER, 1),
             (f"Versão: {CENTRAL_VERSION}", 1),
         )
         for column, (text, weight) in enumerate(status_fields):
@@ -675,28 +838,25 @@ class Launcher(tk.Tk):
             label = tk.Label(
                 status,
                 text=text,
-                bg="#F4F4F4",
-                fg="#333333",
+                bg="#080E19",
+                fg=MUTED,
                 anchor="w",
-                relief="sunken",
-                borderwidth=1,
-                padx=4,
-                font=("Tahoma", 8),
+                padx=10,
+                font=("Segoe UI", 8),
             )
-            label.grid(row=0, column=column, sticky="nsew")
+            label.grid(row=0, column=column, sticky="nsew", pady=(1, 0))
 
         status.columnconfigure(3, weight=2, uniform="status")
         self.status_datetime = tk.Label(
             status,
-            bg="#F4F4F4",
-            fg="#333333",
-            anchor="center",
-            relief="sunken",
-            borderwidth=1,
-            padx=4,
-            font=("Tahoma", 8),
+            bg="#080E19",
+            fg=MUTED,
+            anchor="e",
+            padx=10,
+            font=("Segoe UI", 8),
         )
-        self.status_datetime.grid(row=0, column=3, sticky="nsew")
+        self.status_datetime.grid(row=0, column=3, sticky="nsew", pady=(1, 0))
+        status.rowconfigure(0, weight=1)
         self._update_status_datetime()
 
     def _update_status_datetime(self):
@@ -792,8 +952,6 @@ class Launcher(tk.Tk):
                 f"--central-geometry={window_width}x{window_height}"
                 f"+{area_x + 8}+{area_y + 8}"
             )
-            args = [*args, geometry]
-            self.active_process = subprocess.Popen(args, cwd=working_dir)
             program = {
                 "folha_pagamento.py": "payroll",
                 "controle_energia_agua.py": "energy",
@@ -804,6 +962,10 @@ class Launcher(tk.Tk):
                      if f"--revisa-program={name}" in args),
                     None,
                 )
+            if program is None:
+                raise ValueError(f"Sistema desconhecido: {target.name}")
+            args = [*args, geometry]
+            self.active_process = subprocess.Popen(args, cwd=working_dir)
             self._highlight_program(program)
         except OSError as error:
             messagebox.showerror(
@@ -814,10 +976,10 @@ class Launcher(tk.Tk):
 
     def open_payroll(self):
         script = FOLHA_DIR / "folha_pagamento.py"
-        args = [sys.executable, str(script), CENTRAL_ACCESS_ARGUMENT]
+        args = [sys.executable, str(script)]
         if getattr(sys, "frozen", False):
             script = Path(sys.executable)
-            args = [str(script), "--revisa-program=payroll", CENTRAL_ACCESS_ARGUMENT]
+            args = [str(script), "--revisa-program=payroll"]
         self._start(
             script,
             args,
@@ -827,10 +989,10 @@ class Launcher(tk.Tk):
 
     def open_energy(self):
         script = ENERGIA_DIR / "controle_energia_agua.py"
-        args = [sys.executable, str(script), CENTRAL_ACCESS_ARGUMENT]
+        args = [sys.executable, str(script)]
         if getattr(sys, "frozen", False):
             script = Path(sys.executable)
-            args = [str(script), "--revisa-program=energy", CENTRAL_ACCESS_ARGUMENT]
+            args = [str(script), "--revisa-program=energy"]
         self._start(
             script,
             args,
