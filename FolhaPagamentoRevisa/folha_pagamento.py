@@ -1809,7 +1809,7 @@ class FolhaBase:
         ttk.Label(content,text='Dê dois cliques ou clique com o botão direito em um colaborador para ver as ações. Os nomes importados de 2026 são mantidos separados quando aparecem com identificações diferentes na planilha.',style='Sub.TLabel').pack(anchor='w',pady=(8,0))
         self._add_tab_action_icons(actions)
         self._tab_reports(actions,[
-            ('PIX e Conta (PDF)',self.generate_employee_report_dialog)])
+            ('Dados Cadastrais (PDF)',self.generate_employee_report_dialog)])
 
     def _build_salaries(self):
         actions,content=self._tab_action_layout(self.salaries_tab)
@@ -5937,19 +5937,45 @@ class FolhaBase:
                 'Relatório de PIX',
                 ('Código','Colaborador','Chave PIX'),
                 ('code','name','pix'),
-                (27*mm,65*mm,181*mm),
+                (22*mm,48*mm,116*mm),
+                portrait(A4),
             ),
             'bank':(
                 'Relatório de contas bancárias',
                 ('Código','Colaborador','Banco','Agência','Conta'),
                 ('code','name','bank','bank_agency','bank_account'),
-                (20*mm,50*mm,48*mm,38*mm,117*mm),
+                (18*mm,42*mm,36*mm,28*mm,62*mm),
+                portrait(A4),
+            ),
+            'phone':(
+                'Relatório de telefones',
+                ('Código','Colaborador','Telefone'),
+                ('code','name','phone'),
+                (22*mm,48*mm,116*mm),
+                portrait(A4),
+            ),
+            'email':(
+                'Relatório de e-mails',
+                ('Código','Colaborador','E-mail'),
+                ('code','name','email'),
+                (22*mm,48*mm,116*mm),
+                portrait(A4),
+            ),
+            'address':(
+                'Relatório de endereços',
+                ('Código','Colaborador','Endereço completo'),
+                ('code','name'),
+                (22*mm,48*mm,116*mm),
+                portrait(A4),
             ),
         }
         if report_type not in report_columns:
             raise ValueError('Tipo de relatório de colaborador inválido.')
-        title,headers,fields,column_widths=report_columns[report_type]
-        columns=','.join(fields)
+        title,headers,fields,column_widths,page_size=report_columns[report_type]
+        selected_fields=(
+            ('code','name','address','address_number','bairro','cep','city','state')
+            if report_type=='address' else fields)
+        columns=','.join(selected_fields)
         query='SELECT '+columns+' FROM employees'
         query+=' WHERE active=1'
         params=[]
@@ -5959,9 +5985,8 @@ class FolhaBase:
         query+=' ORDER BY active DESC,name COLLATE NOCASE'
         with connect() as con:
             rows=con.execute(query,params).fetchall()
-
         generated=datetime.now().strftime('%d/%m/%Y %H:%M')
-        page_size=landscape(A4)
+        generated=datetime.now().strftime('%d/%m/%Y %H:%M')
         styles=getSampleStyleSheet()
         title_style=ParagraphStyle(
             'EmployeeReportTitle',parent=styles['Title'],fontName='Helvetica-Bold',
@@ -5990,7 +6015,20 @@ class FolhaBase:
             topMargin=24*mm,bottomMargin=18*mm,title=title,author=AUTHOR)
         data=[[paragraph(value,header_style) for value in headers]]
         for row in rows:
-            data.append([paragraph(row[field],value_style) for field in fields])
+            if report_type=='address':
+                address_parts=(
+                    (row['address'] or '').strip(),
+                    (row['address_number'] or '').strip(),
+                    (row['bairro'] or '').strip(),
+                    f'CEP {row["cep"].strip()}' if row['cep'] else '',
+                    ' / '.join(
+                        value.strip() for value in (row['city'],row['state']) if value
+                    ),
+                )
+                values=(row['code'],row['name'],', '.join(part for part in address_parts if part))
+            else:
+                values=[row[field] for field in fields]
+            data.append([paragraph(value,value_style) for value in values])
         report_table=LongTable(
             data,colWidths=column_widths,repeatRows=1,hAlign='LEFT')
         report_table.setStyle(TableStyle([
@@ -6027,7 +6065,7 @@ class FolhaBase:
             return
 
         dialog=tk.Toplevel(self)
-        dialog.title('Relatórios de PIX e conta bancária')
+        dialog.title('Relatórios de dados cadastrais')
         dialog.configure(bg=BG)
         dialog.transient(self)
         dialog.resizable(False,False)
@@ -6052,6 +6090,9 @@ class FolhaBase:
         report_choices={
             'Relatório de PIX':'pix',
             'Relatório de conta bancária':'bank',
+            'Relatório de telefone':'phone',
+            'Relatório de e-mail':'email',
+            'Relatório de endereço':'address',
         }
         report_var=tk.StringVar(value='Relatório de PIX')
         ttk.Label(fields,text='Tipo de relatório').pack(anchor='w')
