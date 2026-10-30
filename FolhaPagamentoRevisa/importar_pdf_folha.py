@@ -176,13 +176,16 @@ def append_employee_report_pages(
     for page_index, page in enumerate(writer.pages):
         lowest_text_y = None
 
-        def find_lowest_text(text, _, text_matrix, __, ___):
+        def find_lowest_text(text, content_matrix, text_matrix, __, ___):
             nonlocal lowest_text_y
             clean_text = ' '.join(text.split()).lower()
             if (not clean_text or footer_text in clean_text
                     or page_number_pattern.fullmatch(clean_text)):
                 return
-            text_y = float(text_matrix[5])
+            text_y = (
+                float(content_matrix[2]) * float(text_matrix[4])
+                + float(content_matrix[3]) * float(text_matrix[5])
+                + float(content_matrix[5]))
             lowest_text_y = (
                 text_y if lowest_text_y is None
                 else min(lowest_text_y, text_y))

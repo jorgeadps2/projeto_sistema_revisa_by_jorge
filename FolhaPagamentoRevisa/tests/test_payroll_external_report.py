@@ -75,6 +75,26 @@ class PayrollExternalReportTests(unittest.TestCase):
         self.assertGreater(
             text_positions["payslip"], text_positions["report"])
 
+    def test_accounts_for_translated_text_when_finding_available_space(self):
+        document = Canvas(str(self.payslip_path), pagesize=(612, 792))
+        document.saveState()
+        document.translate(0, 100)
+        document.drawString(40, 0, "Holerite Ana Silva")
+        document.restoreState()
+        document.showPage()
+        document.save()
+        self.write_pdf(self.report_path, [[
+            "Envelope Ana Silva", "Competência: Outubro de 2026",
+            "Valor líquido 1.234,56",
+        ]])
+
+        append_employee_report_pages(
+            self.report_path, self.payslip_path, 1, self.employees, 2026, 10)
+
+        page = PdfReader(self.payslip_path).pages[0]
+        self.assertIn("Holerite Ana Silva", page.extract_text())
+        self.assertIn("Envelope Ana Silva", page.extract_text())
+
     def test_places_first_report_below_payslip_and_preserves_additional_pages(self):
         self.write_pdf(self.payslip_path, [["Holerite Ana Silva"]])
         self.write_pdf(self.report_path, [
