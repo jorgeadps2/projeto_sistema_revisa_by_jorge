@@ -1,5 +1,7 @@
 # Sistemas Revisa
 
+Desenvolvido: JORGE ALBERTO DE PAULA
+
 Aplicativo para Windows que reúne em uma janela:
 
 - **Folha de Pagamento**: colaboradores, salarios, folha mensal, proventos, descontos e relatorios PDF.
