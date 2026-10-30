@@ -120,7 +120,7 @@ class EmployeeReportTests(unittest.TestCase):
         self.assertNotIn("Bruna Costa", text)
         self.assertNotIn("ana@example.com", text)
 
-    def test_report_tables_use_compact_centered_columns_and_rows(self):
+    def test_report_columns_expand_to_fit_content_without_filling_page(self):
         original_table = APP.LongTable
         tables = []
 
@@ -133,13 +133,20 @@ class EmployeeReportTests(unittest.TestCase):
                 patch.object(APP, "LongTable", side_effect=capture_table), \
                 patch.object(APP.FolhaBase, "pdf_page_header"):
             self.app.write_employee_report_pdf(
-                str(Path(self.temp_dir.name) / "compact.pdf"), "bank")
+                str(Path(self.temp_dir.name) / "short.pdf"), "pix")
+            self.connection.execute(
+                "UPDATE employees SET pix=? WHERE id=1",
+                ("A much longer PIX key that needs a wider column",))
+            self.app.write_employee_report_pdf(
+                str(Path(self.temp_dir.name) / "long.pdf"), "pix")
 
-        table = tables[0]
-        self.assertLessEqual(sum(table._argW), 155 * APP.mm)
-        self.assertEqual(table.hAlign, "CENTER")
-        self.assertEqual(table._cellStyles[1][0].topPadding, 2)
-        self.assertEqual(table._cellStyles[1][0].bottomPadding, 2)
+        short_table,long_table=tables
+        self.assertLessEqual(sum(short_table._argW),155*APP.mm)
+        self.assertGreater(long_table._argW[2],short_table._argW[2])
+        self.assertLessEqual(long_table._argW[2],80*APP.mm)
+        self.assertEqual(short_table.hAlign,"CENTER")
+        self.assertEqual(short_table._cellStyles[1][0].topPadding,2)
+        self.assertEqual(short_table._cellStyles[1][0].bottomPadding,2)
 
     def test_rejects_unknown_report_type(self):
         with self.assertRaises(ValueError):

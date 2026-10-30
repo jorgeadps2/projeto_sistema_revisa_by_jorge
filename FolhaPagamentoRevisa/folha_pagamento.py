@@ -15,6 +15,7 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import mm
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, LongTable, KeepTogether, PageBreak
 from reportlab.pdfgen.canvas import Canvas
+from reportlab.pdfbase.pdfmetrics import stringWidth
 from reportlab.lib.styles import ParagraphStyle as _ParagraphStyle
 from reportlab.platypus import TableStyle as _TableStyle
 
@@ -5937,41 +5938,46 @@ class FolhaBase:
                 'Relatório de PIX',
                 ('Código','Colaborador','Chave PIX'),
                 ('code','name','pix'),
-                (18*mm,42*mm,94*mm),
+                (13,24,20),
+                (24,55,80),
                 portrait(A4),
             ),
             'bank':(
                 'Relatório de contas bancárias',
                 ('Código','Colaborador','Banco','Agência','Conta'),
                 ('code','name','bank','bank_agency','bank_account'),
-                (16*mm,36*mm,32*mm,25*mm,45*mm),
+                (13,24,20,18,20),
+                (22,48,38,30,48),
                 portrait(A4),
             ),
             'phone':(
                 'Relatório de telefones',
                 ('Código','Colaborador','Telefone'),
                 ('code','name','phone'),
-                (18*mm,42*mm,94*mm),
+                (13,24,24),
+                (24,55,45),
                 portrait(A4),
             ),
             'email':(
                 'Relatório de e-mails',
                 ('Código','Colaborador','E-mail'),
                 ('code','name','email'),
-                (18*mm,42*mm,94*mm),
+                (13,24,22),
+                (24,55,80),
                 portrait(A4),
             ),
             'address':(
                 'Relatório de endereços',
                 ('Código','Colaborador','Endereço completo'),
                 ('code','name'),
-                (18*mm,42*mm,94*mm),
+                (13,24,30),
+                (24,55,115),
                 portrait(A4),
             ),
         }
         if report_type not in report_columns:
             raise ValueError('Tipo de relatório de colaborador inválido.')
-        title,headers,fields,column_widths,page_size=report_columns[report_type]
+        title,headers,fields,min_widths,max_widths,page_size=report_columns[report_type]
         selected_fields=(
             ('code','name','address','address_number','bairro','cep','city','state')
             if report_type=='address' else fields)
@@ -6012,7 +6018,7 @@ class FolhaBase:
         document=SimpleDocTemplate(
             path,pagesize=page_size,rightMargin=15*mm,leftMargin=15*mm,
             topMargin=22*mm,bottomMargin=15*mm,title=title,author=AUTHOR)
-        data=[[paragraph(value,header_style) for value in headers]]
+        cell_values=[list(headers)]
         for row in rows:
             if report_type=='address':
                 address_parts=(
@@ -6027,7 +6033,35 @@ class FolhaBase:
                 values=(row['code'],row['name'],', '.join(part for part in address_parts if part))
             else:
                 values=[row[field] for field in fields]
-            data.append([paragraph(value,value_style) for value in values])
+            cell_values.append(list(values))
+        column_widths=[]
+        for column_index,(min_width,max_width) in enumerate(zip(min_widths,max_widths)):
+            content_width=max(
+                stringWidth(str(row[column_index] or '—'),'Helvetica',7.5)
+                for row in cell_values[1:]
+            ) if rows else 0
+            header_width=stringWidth(headers[column_index],'Helvetica-Bold',7.5)
+            natural_width=max(content_width,header_width)+8
+            column_widths.append(min(max_width*mm,max(min_width*mm,natural_width)))
+
+        available_width=page_size[0]-30*mm
+        total_width=sum(column_widths)
+        if total_width>available_width:
+            min_total=sum(width*mm for width in min_widths)
+            remaining_width=available_width-min_total
+            flexible_width=sum(
+                width-min_width*mm
+                for width,min_width in zip(column_widths,min_widths))
+            column_widths=[
+                min_width*mm+
+                (width-min_width*mm)*remaining_width/flexible_width
+                for width,min_width in zip(column_widths,min_widths)
+            ]
+
+        data=[[paragraph(value,header_style) for value in cell_values[0]]]
+        data.extend(
+            [paragraph(value,value_style) for value in row]
+            for row in cell_values[1:])
         report_table=LongTable(
             data,colWidths=column_widths,repeatRows=1,hAlign='CENTER')
         report_table.setStyle(TableStyle([
