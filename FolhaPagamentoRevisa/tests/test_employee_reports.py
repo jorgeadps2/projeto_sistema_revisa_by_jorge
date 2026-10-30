@@ -135,8 +135,17 @@ class EmployeeReportTests(unittest.TestCase):
     def test_general_report_creates_one_complete_page_per_active_employee(self):
         self.connection.execute("UPDATE employees SET active=1 WHERE id=2")
         path=Path(self.temp_dir.name)/"general.pdf"
+        original_paragraph=APP.Paragraph
+        paragraphs=[]
+
+        def capture_paragraph(text,style):
+            item=original_paragraph(text,style)
+            paragraphs.append(item)
+            return item
+
         with patch.object(APP,"connect",return_value=self.connection), \
                 patch.object(APP,"employee_salary_for_period",return_value=4500), \
+                patch.object(APP,"Paragraph",side_effect=capture_paragraph), \
                 patch.object(APP.FolhaBase,"pdf_page_header"):
             count=self.app.write_employee_report_pdf(str(path),"general")
 
@@ -145,6 +154,12 @@ class EmployeeReportTests(unittest.TestCase):
         self.assertEqual(len(pages),2)
         ana_text=pages[0].extract_text()
         bruna_text=pages[1].extract_text()
+        name_header=next(
+            paragraph for paragraph in paragraphs
+            if paragraph.text=="Código A-100: Ana Silva")
+        self.assertEqual(name_header.style.alignment,0)
+        self.assertIn("Código A-100: Ana Silva",ana_text)
+        self.assertIn("Código B-200: Bruna Costa",bruna_text)
         for value in (
                 "Ana Silva","Mecânica","Oficina","123.456.789-00","CTPS-123",
                 "02/01/1990","15/01/2024","(41) 99999-0000","ana@example.com",
@@ -152,6 +167,9 @@ class EmployeeReportTests(unittest.TestCase):
                 "Rua das Flores, 10, Centro","80000-000","Curitiba / PR","4.500,00"):
             with self.subTest(value=value):
                 self.assertIn(value,ana_text)
+        self.assertLess(
+            ana_text.index("DADOS BANCÁRIOS"),
+            ana_text.index("Chave PIX"))
         self.assertNotIn("Bruna Costa",ana_text)
         self.assertIn("Bruna Costa",bruna_text)
         self.assertNotIn("Ana Silva",bruna_text)

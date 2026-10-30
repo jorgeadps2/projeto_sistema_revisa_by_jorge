@@ -6119,6 +6119,10 @@ class FolhaBase:
             'GeneralEmployeeReportSubtitle',parent=styles['Normal'],
             fontName='Helvetica',fontSize=8,leading=10,
             textColor=colors.HexColor('#64748b'),alignment=1,spaceAfter=8)
+        employee_style=ParagraphStyle(
+            'GeneralEmployeeReportName',parent=styles['Normal'],
+            fontName='Helvetica-Bold',fontSize=11,leading=14,
+            textColor=colors.HexColor(NAVY),alignment=0,spaceAfter=8)
         section_style=ParagraphStyle(
             'GeneralEmployeeReportSection',parent=styles['Normal'],
             fontName='Helvetica-Bold',fontSize=8,leading=9,
@@ -6191,10 +6195,10 @@ class FolhaBase:
             code=(row['code'] or '').strip() or '—'
             story.extend([
                 Paragraph('Ficha cadastral do colaborador',title_style),
-                Paragraph(xml_escape(row['name']),employee_style),
                 Paragraph(
-                    f'Código: {xml_escape(code)} • Gerado em {generated}',
-                    subtitle_style),
+                    f'Código {xml_escape(code)}: {xml_escape(row["name"])}',
+                    employee_style),
+                Paragraph(f'Gerado em {generated}',subtitle_style),
             ])
             address=', '.join(part for part in (
                 (row['address'] or '').strip(),
@@ -6218,12 +6222,12 @@ class FolhaBase:
             story.extend(section('CONTATO',[
                 ('Telefone',row['phone']),
                 ('E-mail',row['email']),
-                ('Chave PIX',row['pix']),
             ]))
             story.extend(section('DADOS BANCÁRIOS',[
                 ('Banco',row['bank']),
                 ('Agência',row['bank_agency']),
                 ('Conta',row['bank_account']),
+                ('Chave PIX',row['pix']),
             ]))
             story.extend(section('ENDEREÇO',[
                 ('Endereço',address),
