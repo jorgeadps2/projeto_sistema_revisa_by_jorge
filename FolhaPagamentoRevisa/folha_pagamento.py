@@ -4,7 +4,7 @@ import os, sys, json, sqlite3, shutil, subprocess, tempfile, math, hashlib, hmac
 import urllib.parse
 from datetime import datetime, timedelta
 from xml.sax.saxutils import escape as xml_escape
-from importar_pdf_folha import read_payroll_pdf
+from importar_pdf_folha import append_employee_report_pages, read_payroll_pdf
 import tkinter as tk
 from tkinter import font as tkfont
 from tkinter import ttk, messagebox, filedialog, simpledialog
@@ -368,6 +368,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS annual_employees(id INTEGER PRIMARY KEY AUTOINCREMENT,year INTEGER NOT NULL,employee_id INTEGER NOT NULL REFERENCES employees(id),salary_base REAL NOT NULL DEFAULT 0,role TEXT DEFAULT '',sector TEXT DEFAULT '',active INTEGER NOT NULL DEFAULT 1,notes TEXT DEFAULT '',UNIQUE(year,employee_id));
         CREATE TABLE IF NOT EXISTS payrolls(id INTEGER PRIMARY KEY AUTOINCREMENT,year INTEGER NOT NULL,month INTEGER NOT NULL,status TEXT NOT NULL DEFAULT 'Em revisão',notes TEXT DEFAULT '',created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,UNIQUE(year,month));
         CREATE TABLE IF NOT EXISTS payroll_items(id INTEGER PRIMARY KEY AUTOINCREMENT,payroll_id INTEGER NOT NULL REFERENCES payrolls(id) ON DELETE CASCADE,employee_id INTEGER NOT NULL REFERENCES employees(id),salary REAL NOT NULL DEFAULT 0,pf REAL NOT NULL DEFAULT 0,overtime REAL NOT NULL DEFAULT 0,vacation REAL NOT NULL DEFAULT 0,meta REAL NOT NULL DEFAULT 0,marmitex REAL NOT NULL DEFAULT 0,advances REAL NOT NULL DEFAULT 0,pharmacy REAL NOT NULL DEFAULT 0,other_deductions REAL NOT NULL DEFAULT 0,loan REAL NOT NULL DEFAULT 0,total REAL NOT NULL DEFAULT 0,original_total REAL,source TEXT NOT NULL DEFAULT 'Manual',notes TEXT DEFAULT '',UNIQUE(payroll_id,employee_id));
+        CREATE TABLE IF NOT EXISTS payroll_accounting_reports(year INTEGER NOT NULL,month INTEGER NOT NULL,path TEXT NOT NULL,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,PRIMARY KEY(year,month));
         CREATE TABLE IF NOT EXISTS employee_loans(id INTEGER PRIMARY KEY AUTOINCREMENT,employee_id INTEGER NOT NULL REFERENCES employees(id),principal REAL NOT NULL,installment_count INTEGER NOT NULL,start_year INTEGER NOT NULL,start_month INTEGER NOT NULL,notes TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
         CREATE TABLE IF NOT EXISTS employee_loan_adjustments(id INTEGER PRIMARY KEY AUTOINCREMENT,loan_id INTEGER NOT NULL REFERENCES employee_loans(id) ON DELETE CASCADE,principal REAL NOT NULL,installment_count INTEGER NOT NULL,start_year INTEGER NOT NULL,start_month INTEGER NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,UNIQUE(loan_id,start_year,start_month));
         CREATE TABLE IF NOT EXISTS employee_meta_entries(id INTEGER PRIMARY KEY AUTOINCREMENT,employee_id INTEGER NOT NULL REFERENCES employees(id),entry_date TEXT NOT NULL,amount REAL NOT NULL CHECK(amount>0),notes TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
@@ -2526,7 +2527,7 @@ class FolhaBase:
             return
         self.employee_salary_dialog(int(selection[0]))
 
-    def save_accounting_pdf_values(self,year,month,entries):
+    def save_accounting_pdf_values(self,year,month,entries,source_path=None):
         if not entries:
             raise ValueError('Selecione pelo menos um funcionário.')
         with connect() as con:
@@ -2555,6 +2556,10 @@ class FolhaBase:
                 con.execute('INSERT INTO audit_log(action,details) VALUES(?,?)',(
                     'Importação local de PDF contábil',
                     f'{item["name"]} - {month:02d}/{year}: salário {brl(item["salary"])} para {brl(amount)}'))
+            if source_path:
+                con.execute('''INSERT OR REPLACE INTO payroll_accounting_reports(
+                    year,month,path,updated_at) VALUES(?,?,?,CURRENT_TIMESTAMP)''',
+                    (year,month,os.path.abspath(source_path)))
         return len(entries)
 
     def import_accounting_pdf_dialog(self):
@@ -2641,7 +2646,8 @@ class FolhaBase:
                     parent=form):
                 return
             try:
-                saved=self.save_accounting_pdf_values(year,month,selected)
+                saved=self.save_accounting_pdf_values(
+                    year,month,selected,source_path=path)
             except (ValueError,sqlite3.Error) as ex:
                 messagebox.showerror('Importação não realizada',str(ex),parent=form)
                 return
@@ -5484,7 +5490,9 @@ class FolhaBase:
             employee_id=None if index==0 else employees[index-1]['id']
             try:
                 path=temporary_pdf_path(f'holerites_{year}_{month:02d}_')
-                self.write_payslips_pdf(year,month,path,employee_id)
+                report_path=self.accounting_report_path_for_period(year,month)
+                self.write_payslips_with_accounting_report(
+                    year,month,path,employee_id,report_path)
                 open_pdf(path)
             except Exception as ex:
                 messagebox.showerror(
@@ -5501,6 +5509,94 @@ class FolhaBase:
             controls,text='Gerar PDF',style='Report.TButton',
             command=generate).pack(side='right')
 
+    def accounting_report_path_for_period(self,year,month):
+        with connect() as con:
+            row=con.execute(
+                'SELECT path FROM payroll_accounting_reports WHERE year=? AND month=?',
+                (year,month)).fetchone()
+        if row and os.path.isfile(row['path']):
+            return row['path']
+        period_folder=os.path.join(
+            ACCOUNTING_PDF_DIR,str(year),f'{month:02d}{year}')
+        if os.path.isdir(period_folder):
+            reports=sorted(
+                os.path.join(period_folder,name)
+                for name in os.listdir(period_folder)
+                if name.lower().endswith('.pdf')
+                and os.path.isfile(os.path.join(period_folder,name)))
+            if len(reports)==1:
+                report_path=str(reports[0])
+                with connect() as con:
+                    con.execute('''INSERT OR REPLACE INTO payroll_accounting_reports(
+                        year,month,path,updated_at) VALUES(?,?,?,CURRENT_TIMESTAMP)''',
+                        (year,month,os.path.abspath(report_path)))
+                return report_path
+            if not reports:
+                return None
+            initialdir=period_folder
+        else:
+            return None
+        path=filedialog.askopenfilename(
+            parent=self,
+            title='Selecionar relatório externo para anexar ao holerite',
+            initialdir=initialdir,
+            filetypes=[('PDF','*.pdf')])
+        return path or None
+
+    def append_accounting_report_to_payslip(
+            self,year,month,path,employee_id,report_path):
+        if os.path.abspath(path)==os.path.abspath(report_path):
+            raise ValueError('O relatório externo e o holerite precisam ser arquivos diferentes.')
+        with connect() as con:
+            payroll=con.execute(
+                'SELECT id FROM payrolls WHERE year=? AND month=?',
+                (year,month)).fetchone()
+            if payroll is None:
+                raise ValueError('A folha desta competência não foi encontrada.')
+            employees=[dict(row) for row in con.execute(
+                '''SELECT e.id,e.name FROM payroll_items i
+                JOIN employees e ON e.id=i.employee_id
+                WHERE i.payroll_id=?''',(payroll['id'],)).fetchall()]
+        append_employee_report_pages(
+            report_path,path,employee_id,employees,year,month)
+        with connect() as con:
+            con.execute('''INSERT OR REPLACE INTO payroll_accounting_reports(
+                year,month,path,updated_at) VALUES(?,?,?,CURRENT_TIMESTAMP)''',
+                (year,month,os.path.abspath(report_path)))
+
+    def write_payslips_with_accounting_report(
+            self,year,month,path,employee_id,report_path):
+        if not report_path:
+            return self.write_payslips_pdf(year,month,path,employee_id)
+        if employee_id is not None:
+            self.write_payslips_pdf(year,month,path,employee_id)
+            self.append_accounting_report_to_payslip(
+                year,month,path,employee_id,report_path)
+            return 1
+
+        payroll,rows=self.payroll_report_rows(year,month)
+        if payroll is None:
+            raise ValueError(f'Não há folha criada para {MONTHS[month-1]} de {year}.')
+        if not rows:
+            raise ValueError('Nenhum lançamento encontrado para gerar o holerite.')
+        writer_path=os.path.abspath(path)
+        with tempfile.TemporaryDirectory(
+                prefix=f'holerites_{year}_{month:02d}_') as temporary_folder:
+            from pypdf import PdfWriter
+
+            writer=PdfWriter()
+            for row in rows:
+                employee_path=os.path.join(
+                    temporary_folder,f'holerite_{row["employee_id"]}.pdf')
+                self.write_payslips_pdf(
+                    year,month,employee_path,row['employee_id'])
+                self.append_accounting_report_to_payslip(
+                    year,month,employee_path,row['employee_id'],report_path)
+                writer.append(employee_path)
+            with open(writer_path,'wb') as output:
+                writer.write(output)
+        return len(rows)
+
     def send_payslip_whatsapp_dialog(self):
         period=self.selected_payroll_period()
         if period is None:
@@ -5515,7 +5611,7 @@ class FolhaBase:
         year,month=period
         with connect() as con:
             employee=con.execute(
-                '''SELECT i.employee_id,e.name,e.phone
+                '''SELECT i.employee_id,e.name,e.phone,i.source
                 FROM payroll_items i
                 JOIN payrolls p ON p.id=i.payroll_id
                 JOIN employees e ON e.id=i.employee_id
@@ -5536,6 +5632,7 @@ class FolhaBase:
                 f'{ex}\n\nConfira o telefone do colaborador no cadastro.',
                 parent=self)
             return
+        report_path=self.accounting_report_path_for_period(year,month)
         safe_name=re.sub(r'[<>:"/\\|?*]+','_',employee['name']).strip(' .')
         path=filedialog.asksaveasfilename(
             parent=self,
@@ -5548,6 +5645,9 @@ class FolhaBase:
         try:
             self.write_payslips_pdf(
                 year,month,path,employee['employee_id'])
+            if report_path:
+                self.append_accounting_report_to_payslip(
+                    year,month,path,employee['employee_id'],report_path)
             open_pdf(path)
             open_whatsapp_desktop(chat_url)
             show_file_in_folder(path)
@@ -5581,7 +5681,7 @@ class FolhaBase:
                     parent=self)
                 return
             employees=con.execute(
-                '''SELECT e.id,e.name,e.phone
+                '''SELECT e.id,e.name,e.phone,i.source
                 FROM payroll_items i JOIN employees e ON e.id=i.employee_id
                 WHERE i.payroll_id=?
                 ORDER BY e.name COLLATE NOCASE''',
@@ -5652,6 +5752,7 @@ class FolhaBase:
                     'Marque pelo menos um colaborador.',
                     parent=win)
                 return
+            report_path=self.accounting_report_path_for_period(year,month)
             try:
                 os.makedirs(ZAP_REPORTS_DIR,exist_ok=True)
                 folder=tempfile.mkdtemp(
@@ -5671,6 +5772,9 @@ class FolhaBase:
                 try:
                     self.write_payslips_pdf(
                         year,month,path,employee['id'])
+                    if report_path:
+                        self.append_accounting_report_to_payslip(
+                            year,month,path,employee['id'],report_path)
                 except Exception as ex:
                     errors.append(f'{employee["name"]}: {ex}')
                 else:

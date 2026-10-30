@@ -6,6 +6,7 @@ import threading
 import tkinter as tk
 from datetime import datetime
 from pathlib import Path
+from time import monotonic
 from tkinter import filedialog, messagebox, ttk
 
 from .. import APP_NAME, APP_VERSION
@@ -47,6 +48,7 @@ def running_legacy_programs():
 class MainWindow(tk.Tk):
     def __init__(self):
         super().__init__()
+        self.withdraw()
         self.log = get_logger()
         self.session = Session()
         self.limiter = AttemptLimiter()
@@ -73,8 +75,44 @@ class MainWindow(tk.Tk):
         except tk.TclError:
             pass
         self.auto_sync_notice = ""
-        self._automatic_sync_startup()
-        self.show_login()
+        self._show_startup_splash()
+        try:
+            self._automatic_sync_startup()
+            self._close_startup_splash()
+            self.show_login()
+        finally:
+            self._close_startup_splash()
+        self.deiconify()
+        self.lift()
+
+    def _show_startup_splash(self):
+        self.startup_splash_started = monotonic()
+        self.overrideredirect(True)
+        self.attributes("-topmost", True)
+        self.configure(bg="#F0F0F0")
+        self.geometry("500x200")
+        self.startup_splash_label = tk.Label(
+            self,
+            text="AGUARDE, INICIALIZANDO O SISTEMA...",
+            bg="#F0F0F0",
+            fg="#000000",
+            font=("Segoe UI", 11, "bold"),
+        )
+        self.startup_splash_label.pack(fill="both", expand=True)
+        self._center_window(500, 200)
+        self.deiconify()
+        self.update()
+
+    def _close_startup_splash(self):
+        splash_label = getattr(self, "startup_splash_label", None)
+        if splash_label is not None:
+            remaining_ms = 3000 - int((monotonic() - self.startup_splash_started) * 1000)
+            if remaining_ms > 0:
+                self.after(remaining_ms)
+            splash_label.destroy()
+            self.startup_splash_label = None
+            self.attributes("-topmost", False)
+            self.overrideredirect(False)
 
     # ------------------------------------------------------------------ utilidades
     def _clear(self):

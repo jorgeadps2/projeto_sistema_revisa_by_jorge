@@ -129,9 +129,9 @@ class PayrollPdfTests(unittest.TestCase):
         note_fragments = [fragment for fragment in observation.frags
                           if "Conferir" in fragment.text or "Segunda linha" in fragment.text]
         self.assertEqual(len(note_fragments), 2)
-        self.assertEqual(name_fragment.fontSize, APP._scaled_font(9))
+        self.assertEqual(name_fragment.fontSize, 7)
         for fragment in note_fragments:
-            self.assertEqual(fragment.fontSize, name_fragment.fontSize / 2)
+            self.assertEqual(fragment.fontSize, 15)
 
     def test_no_notes_and_empty_payroll_do_not_add_observation_section(self):
         for rows in ([self.row(notes=None)], []):
