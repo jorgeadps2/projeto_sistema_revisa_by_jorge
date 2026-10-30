@@ -5937,35 +5937,35 @@ class FolhaBase:
                 'Relatório de PIX',
                 ('Código','Colaborador','Chave PIX'),
                 ('code','name','pix'),
-                (22*mm,48*mm,116*mm),
+                (18*mm,42*mm,94*mm),
                 portrait(A4),
             ),
             'bank':(
                 'Relatório de contas bancárias',
                 ('Código','Colaborador','Banco','Agência','Conta'),
                 ('code','name','bank','bank_agency','bank_account'),
-                (18*mm,42*mm,36*mm,28*mm,62*mm),
+                (16*mm,36*mm,32*mm,25*mm,45*mm),
                 portrait(A4),
             ),
             'phone':(
                 'Relatório de telefones',
                 ('Código','Colaborador','Telefone'),
                 ('code','name','phone'),
-                (22*mm,48*mm,116*mm),
+                (18*mm,42*mm,94*mm),
                 portrait(A4),
             ),
             'email':(
                 'Relatório de e-mails',
                 ('Código','Colaborador','E-mail'),
                 ('code','name','email'),
-                (22*mm,48*mm,116*mm),
+                (18*mm,42*mm,94*mm),
                 portrait(A4),
             ),
             'address':(
                 'Relatório de endereços',
                 ('Código','Colaborador','Endereço completo'),
                 ('code','name'),
-                (22*mm,48*mm,116*mm),
+                (18*mm,42*mm,94*mm),
                 portrait(A4),
             ),
         }
@@ -5986,20 +5986,19 @@ class FolhaBase:
         with connect() as con:
             rows=con.execute(query,params).fetchall()
         generated=datetime.now().strftime('%d/%m/%Y %H:%M')
-        generated=datetime.now().strftime('%d/%m/%Y %H:%M')
         styles=getSampleStyleSheet()
         title_style=ParagraphStyle(
             'EmployeeReportTitle',parent=styles['Title'],fontName='Helvetica-Bold',
-            fontSize=16,leading=20,textColor=colors.HexColor(NAVY),alignment=1,spaceAfter=4)
+            fontSize=14,leading=17,textColor=colors.HexColor(NAVY),alignment=1,spaceAfter=3)
         subtitle_style=ParagraphStyle(
             'EmployeeReportSubtitle',parent=styles['Normal'],fontName='Helvetica',
-            fontSize=9,textColor=colors.HexColor('#64748b'),alignment=1,spaceAfter=10)
+            fontSize=8,textColor=colors.HexColor('#64748b'),alignment=1,spaceAfter=6)
         header_style=ParagraphStyle(
             'EmployeeReportHeader',parent=styles['Normal'],fontName='Helvetica-Bold',
-            fontSize=8,leading=9,textColor=colors.white)
+            fontSize=7.5,leading=8.5,textColor=colors.white)
         value_style=ParagraphStyle(
             'EmployeeReportValue',parent=styles['Normal'],fontName='Helvetica',
-            fontSize=8,leading=10,wordWrap='CJK')
+            fontSize=7.5,leading=8.5,wordWrap='CJK')
 
         def paragraph(value,style):
             return Paragraph(xml_escape(str(value or '—')),style)
@@ -6011,8 +6010,8 @@ class FolhaBase:
             rows[0]['name'] if employee_id is not None and rows
             else 'Todos os colaboradores')
         document=SimpleDocTemplate(
-            path,pagesize=page_size,rightMargin=12*mm,leftMargin=12*mm,
-            topMargin=24*mm,bottomMargin=18*mm,title=title,author=AUTHOR)
+            path,pagesize=page_size,rightMargin=15*mm,leftMargin=15*mm,
+            topMargin=22*mm,bottomMargin=15*mm,title=title,author=AUTHOR)
         data=[[paragraph(value,header_style) for value in headers]]
         for row in rows:
             if report_type=='address':
@@ -6030,16 +6029,16 @@ class FolhaBase:
                 values=[row[field] for field in fields]
             data.append([paragraph(value,value_style) for value in values])
         report_table=LongTable(
-            data,colWidths=column_widths,repeatRows=1,hAlign='LEFT')
+            data,colWidths=column_widths,repeatRows=1,hAlign='CENTER')
         report_table.setStyle(TableStyle([
             ('BACKGROUND',(0,0),(-1,0),colors.HexColor(NAVY)),
             ('ROWBACKGROUNDS',(0,1),(-1,-1),[colors.white,colors.HexColor('#f3f6fb')]),
-            ('GRID',(0,0),(-1,-1),0.35,colors.HexColor('#dbe3ee')),
+            ('GRID',(0,0),(-1,-1),0.25,colors.HexColor('#dbe3ee')),
             ('VALIGN',(0,0),(-1,-1),'MIDDLE'),
-            ('LEFTPADDING',(0,0),(-1,-1),5),
-            ('RIGHTPADDING',(0,0),(-1,-1),5),
-            ('TOPPADDING',(0,0),(-1,-1),5),
-            ('BOTTOMPADDING',(0,0),(-1,-1),5),
+            ('LEFTPADDING',(0,0),(-1,-1),3),
+            ('RIGHTPADDING',(0,0),(-1,-1),3),
+            ('TOPPADDING',(0,0),(-1,-1),2),
+            ('BOTTOMPADDING',(0,0),(-1,-1),2),
         ]))
         story=[
             Paragraph(xml_escape(title),title_style),
