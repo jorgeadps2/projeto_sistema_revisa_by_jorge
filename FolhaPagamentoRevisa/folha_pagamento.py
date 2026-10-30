@@ -568,6 +568,55 @@ def normalize_employee_date(value):
     raise ValueError('Use o formato DD/MM/AAAA para as datas.')
 
 
+def employee_report_filter_clause(filters=None):
+    filters=filters or {}
+    clauses=[]
+    params=[]
+
+    name_or_code=(filters.get('name_or_code') or '').strip()
+    if name_or_code:
+        escaped=name_or_code.replace('!','!!').replace('%','!%').replace('_','!_')
+        pattern=f'%{escaped}%'
+        clauses.append("(name LIKE ? ESCAPE '!' COLLATE NOCASE OR code LIKE ? ESCAPE '!' COLLATE NOCASE)")
+        params.extend((pattern,pattern))
+
+    for key in ('role','sector','city'):
+        value=(filters.get(key) or '').strip()
+        if value:
+            clauses.append(f'{key}=?')
+            params.append(value)
+
+    status=filters.get('status') or 'Todos'
+    if status=='Ativos':
+        clauses.append('active=1')
+    elif status=='Inativos':
+        clauses.append('active=0')
+    elif status!='Todos':
+        raise ValueError('Selecione uma situação válida.')
+
+    for key,label in (
+            ('admission_from','admission_date'),
+            ('admission_to','admission_date'),
+            ('dismissal_from','dismissal_date'),
+            ('dismissal_to','dismissal_date')):
+        raw_value=(filters.get(key) or '').strip()
+        if raw_value:
+            date_value=normalize_employee_date(raw_value)
+            comparison='>=' if key.endswith('_from') else '<='
+            clauses.append(f'{label}{comparison}?')
+            params.append(date_value)
+
+    for start_key,end_key,label in (
+            ('admission_from','admission_to','admissão'),
+            ('dismissal_from','dismissal_to','demissão')):
+        start=(filters.get(start_key) or '').strip()
+        end=(filters.get(end_key) or '').strip()
+        if start and end and normalize_employee_date(start)>normalize_employee_date(end):
+            raise ValueError(f'A data inicial da {label} não pode ser posterior à data final.')
+
+    return ' AND '.join(clauses) if clauses else '1=1',tuple(params)
+
+
 def normalize_salary_register_period(value):
     value=value.strip()
     for period_format in ('%m/%Y','%m-%Y'):
@@ -5135,7 +5184,9 @@ class FolhaBase:
         summary_value_style=ParagraphStyle('PayrollSummaryValue',parent=summary_style,fontSize=amount_font_size,leading=8)
         credit_summary_style=ParagraphStyle('PayrollCreditSummary',parent=summary_value_style,textColor=credit_color)
         debit_summary_style=ParagraphStyle('PayrollDebitSummary',parent=summary_value_style,textColor=debit_color)
-        observation_style=ParagraphStyle('PayrollObservation',parent=employee_style,fontSize=9,leading=12,spaceAfter=8)
+        observation_name_font_size=7
+        observation_text_font_size=15
+        observation_style=ParagraphStyle('PayrollObservation',parent=employee_style,fontSize=9,leading=18,spaceAfter=8)
         total_value_style=ParagraphStyle('PayrollTotalValue',parent=credit_summary_style,alignment=1)
         generated=datetime.now().strftime('%d/%m/%Y %H:%M')
         page_size=landscape(A4)
@@ -5240,8 +5291,9 @@ class FolhaBase:
             for row in noted_rows:
                 notes=xml_escape(row['notes'].strip()).replace('\n','<br/>')
                 story.append(Paragraph(
-                    f'{note_marker} <b>{xml_escape(str(row["name"]))}</b><br/>'
-                    f'<font size="{observation_style.fontSize/2}">{notes}</font>',
+                    f'{note_marker} <font size="{observation_name_font_size}"><b>'
+                    f'{xml_escape(str(row["name"]))}</b></font><br/>'
+                    f'<font size="{observation_text_font_size}">{notes}</font>',
                     observation_style))
         document.build(story,onFirstPage=draw_page,onLaterPages=draw_page,canvasmaker=NumberedReportCanvas)
         return totals['total']
@@ -5928,15 +5980,18 @@ class FolhaBase:
         ttk.Button(buttons,text='Gerar PDF',style='Report.TButton',command=generate).pack(side='right')
         win.grab_set()
 
-    def write_employee_report_pdf(self,path,employee_id=None):
+    def write_employee_report_pdf(self,path,employee_id=None,filters=None):
+        filter_clause,filter_params=employee_report_filter_clause(filters)
+        clauses=[filter_clause]
+        query_params=list(filter_params)
+        if employee_id is not None:
+            clauses.append('id=?')
+            query_params.append(employee_id)
         with connect() as con:
-            if employee_id is None:
-                rows=con.execute(
-                    'SELECT * FROM employees ORDER BY active DESC,name COLLATE NOCASE').fetchall()
-            else:
-                rows=con.execute(
-                    'SELECT * FROM employees WHERE id=? ORDER BY active DESC,name COLLATE NOCASE',
-                    (employee_id,)).fetchall()
+            rows=con.execute(
+                'SELECT * FROM employees WHERE '+' AND '.join(clauses)+
+                ' ORDER BY active DESC,name COLLATE NOCASE',
+                query_params).fetchall()
             salaries={
                 row['id']:employee_salary_for_period(con,row['id'],datetime.now().year,datetime.now().month)
                 for row in rows
@@ -5982,6 +6037,26 @@ class FolhaBase:
             Paragraph(xml_escape(report_title),title_style),
             Paragraph(f'{len(rows)} colaborador(s) cadastrado(s) • Gerado em {generated}',subtitle_style),
         ]
+        if filters:
+            filter_labels=(
+                ('name_or_code','Nome/código'),
+                ('role','Cargo'),
+                ('sector','Setor'),
+                ('city','Cidade'),
+                ('status','Situação'),
+                ('admission_from','Admissão a partir de'),
+                ('admission_to','Admissão até'),
+                ('dismissal_from','Demissão a partir de'),
+                ('dismissal_to','Demissão até'),
+            )
+            applied=[
+                f'{label}: {filters[key]}'
+                for key,label in filter_labels
+                if filters.get(key) and (key!='status' or filters[key]!='Todos')
+            ]
+            if applied:
+                story.append(Paragraph(
+                    xml_escape('Filtros: '+' • '.join(applied)),subtitle_style))
         field_pairs=(
             ('Salário atual','salary','Cargo','role'),
             ('Setor','sector','CPF','cpf'),
@@ -6055,9 +6130,17 @@ class FolhaBase:
 
     def generate_employee_report_dialog(self):
         with connect() as con:
-            employees=con.execute(
-                'SELECT id,name FROM employees ORDER BY active DESC,name COLLATE NOCASE').fetchall()
-        if not employees:
+            employee_count=con.execute('SELECT COUNT(*) FROM employees').fetchone()[0]
+            choices={
+                key:[
+                    row[0] for row in con.execute(
+                        f'''SELECT DISTINCT {key} FROM employees
+                            WHERE TRIM(COALESCE({key},''))<>''
+                            ORDER BY {key} COLLATE NOCASE''').fetchall()
+                ]
+                for key in ('role','sector','city')
+            }
+        if not employee_count:
             messagebox.showwarning(
                 'Sem colaboradores',
                 'Cadastre um colaborador antes de gerar o relatório.',
@@ -6068,34 +6151,103 @@ class FolhaBase:
         dialog.title('Relatório de colaboradores')
         dialog.configure(bg=BG)
         dialog.transient(self)
-        dialog.grab_set()
-        dialog.resizable(False,False)
+        dialog.resizable(True,False)
         fields=ttk.Frame(dialog,padding=20)
         fields.pack(fill='both',expand=True)
         ttk.Label(
-            fields,text='Escolha os colaboradores para o relatório',
-            font=('Segoe UI Semibold',14)).pack(anchor='w',pady=(0,12))
-        employee_choices={'Todos os colaboradores':None}
-        employee_choices.update({employee['name']:employee['id'] for employee in employees})
-        employee_var=tk.StringVar(value='Todos os colaboradores')
-        ttk.Label(fields,text='Colaborador').pack(anchor='w')
-        ttk.Combobox(
-            fields,textvariable=employee_var,state='readonly',width=38,
-            values=list(employee_choices)).pack(fill='x',pady=(5,14))
+            fields,text='Filtre os colaboradores para gerar o relatório',
+            font=('Segoe UI Semibold',14)).grid(row=0,column=0,columnspan=2,sticky='w',pady=(0,12))
+        fields.columnconfigure(0,weight=1)
+        fields.columnconfigure(1,weight=1)
+
+        def add_filter(label,row,column,variable,values=None,width=30):
+            control=ttk.Frame(fields)
+            control.grid(
+                row=row,column=column,sticky='ew',
+                padx=(0,12) if column==0 else (0,0),pady=(0,10))
+            control.columnconfigure(0,weight=1)
+            ttk.Label(control,text=label).grid(row=0,column=0,sticky='w',pady=(0,4))
+            if values is None:
+                widget=ttk.Entry(control,textvariable=variable,width=width)
+            else:
+                widget=ttk.Combobox(
+                    control,textvariable=variable,state='readonly',
+                    values=values,width=width)
+            widget.grid(row=1,column=0,sticky='ew')
+            return control
+
+        name_var=tk.StringVar()
+        role_var=tk.StringVar(value='Todos')
+        sector_var=tk.StringVar(value='Todos')
+        city_var=tk.StringVar(value='Todos')
+        status_var=tk.StringVar(value='Todos')
+        admission_from_var=tk.StringVar()
+        admission_to_var=tk.StringVar()
+        dismissal_from_var=tk.StringVar()
+        dismissal_to_var=tk.StringVar()
+        add_filter('Nome ou código',1,0,name_var)
+        add_filter('Cargo',1,1,role_var,['Todos']+choices['role'])
+        add_filter('Setor',2,0,sector_var,['Todos']+choices['sector'])
+        add_filter('Situação',2,1,status_var,['Todos','Ativos','Inativos'])
+        add_filter('Cidade',3,0,city_var,['Todos']+choices['city'])
+
+        def add_date_range(label,row,start_var,end_var):
+            control=ttk.Frame(fields)
+            control.grid(row=row,column=1,sticky='ew',pady=(0,10))
+            control.columnconfigure(0,weight=1)
+            control.columnconfigure(1,weight=1)
+            ttk.Label(control,text=label).grid(
+                row=0,column=0,columnspan=2,sticky='w',pady=(0,4))
+            ttk.Entry(control,textvariable=start_var,width=14).grid(
+                row=1,column=0,sticky='ew',padx=(0,6))
+            ttk.Entry(control,textvariable=end_var,width=14).grid(
+                row=1,column=1,sticky='ew')
+            ttk.Label(control,text='De / Até (DD/MM/AAAA)',style='Sub.TLabel').grid(
+                row=2,column=0,columnspan=2,sticky='w',pady=(3,0))
+
+        add_date_range('Período de admissão',3,admission_from_var,admission_to_var)
+        add_date_range('Período de demissão',4,dismissal_from_var,dismissal_to_var)
+        ttk.Label(
+            fields,
+            text='O PDF inclui todos os dados cadastrados, como documentos, telefone, endereço, PIX e dados bancários.',
+            style='Sub.TLabel').grid(
+                row=5,column=0,columnspan=2,sticky='w',pady=(0,12))
         buttons=ttk.Frame(fields)
-        buttons.pack(fill='x')
+        buttons.grid(row=6,column=0,columnspan=2,sticky='ew')
         ttk.Button(buttons,text='Cancelar',command=dialog.destroy).pack(side='right')
 
         def generate_report():
-            employee_id=employee_choices.get(employee_var.get())
-            dialog.destroy()
-            suffix=(
-                f'_{employee_id}'
-                if employee_id is not None else '_todos')
-            path=temporary_pdf_path(
-                f'relatorio_colaboradores_{datetime.now():%Y_%m_%d}{suffix}_')
+            filters={
+                'name_or_code':name_var.get().strip(),
+                'role':'' if role_var.get()=='Todos' else role_var.get(),
+                'sector':'' if sector_var.get()=='Todos' else sector_var.get(),
+                'city':'' if city_var.get()=='Todos' else city_var.get(),
+                'status':status_var.get(),
+                'admission_from':admission_from_var.get().strip(),
+                'admission_to':admission_to_var.get().strip(),
+                'dismissal_from':dismissal_from_var.get().strip(),
+                'dismissal_to':dismissal_to_var.get().strip(),
+            }
             try:
-                employee_count=self.write_employee_report_pdf(path,employee_id)
+                filter_clause,filter_params=employee_report_filter_clause(filters)
+                with connect() as con:
+                    matching_count=con.execute(
+                        'SELECT COUNT(*) FROM employees WHERE '+filter_clause,
+                        filter_params).fetchone()[0]
+            except (sqlite3.Error,ValueError) as ex:
+                messagebox.showwarning('Filtro inválido',str(ex),parent=dialog)
+                return
+            if not matching_count:
+                messagebox.showinfo(
+                    'Nenhum colaborador encontrado',
+                    'Nenhum colaborador corresponde aos filtros informados.',
+                    parent=dialog)
+                return
+            dialog.destroy()
+            path=temporary_pdf_path(
+                f'relatorio_colaboradores_{datetime.now():%Y_%m_%d}_')
+            try:
+                self.write_employee_report_pdf(path,filters=filters)
                 open_pdf(path)
             except Exception as ex:
                 messagebox.showerror(
@@ -6105,9 +6257,11 @@ class FolhaBase:
                 return
 
         ttk.Button(
-            buttons,text='Abrir relatório',style='Accent.TButton',
+            buttons,text='Gerar PDF',style='Accent.TButton',
             command=generate_report).pack(side='right',padx=(0,8))
         dialog.bind('<Escape>',lambda event:dialog.destroy())
+        dialog.geometry('760x470')
+        dialog.grab_set()
         self.wait_window(dialog)
 
     def loan_report_data(self,year,month,kind=LOAN_KIND,employee_id=None):
