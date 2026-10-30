@@ -87,10 +87,11 @@ class MainWindow(tk.Tk):
 
     def _show_startup_splash(self):
         self.startup_splash_started = monotonic()
+        self.minsize(0, 0)
         self.overrideredirect(True)
         self.attributes("-topmost", True)
         self.configure(bg="#F0F0F0")
-        self.geometry("500x200")
+        self.geometry("400x80")
         self.startup_splash_label = tk.Label(
             self,
             text="AGUARDE, INICIALIZANDO O SISTEMA...",
@@ -99,7 +100,7 @@ class MainWindow(tk.Tk):
             font=("Segoe UI", 11, "bold"),
         )
         self.startup_splash_label.pack(fill="both", expand=True)
-        self._center_window(500, 200)
+        self._center_window(400, 80)
         self.deiconify()
         self.update()
 
@@ -113,6 +114,7 @@ class MainWindow(tk.Tk):
             self.startup_splash_label = None
             self.attributes("-topmost", False)
             self.overrideredirect(False)
+            self.minsize(560, 280)
 
     # ------------------------------------------------------------------ utilidades
     def _clear(self):
