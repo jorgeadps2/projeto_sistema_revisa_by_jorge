@@ -62,13 +62,6 @@ def _kv(parent, rows, bg=t.SURFACE):
     return grid
 
 
-def _fmt_time(path):
-    try:
-        return datetime.fromtimestamp(Path(path).stat().st_mtime).strftime("%d/%m/%Y %H:%M")
-    except OSError:
-        return "—"
-
-
 def _signing_status(warning_days=30):
     text, status, _when = folha.signing_status(warning_days)
     colors = {
@@ -80,18 +73,18 @@ def _signing_status(warning_days=30):
     return text, colors[status]
 
 
-def _verify_sync_password(self):
+def verify_main_password(self, title="Acesso protegido", prompt="Digite a senha principal:"):
     remaining = self.sync_limiter.remaining_lock()
     if remaining > 0:
         messagebox.showwarning(
-            "Sincronização protegida",
+            title,
             f"Muitas tentativas. Aguarde {int(remaining) + 1} segundos.",
             parent=self,
         )
         return False
     password = simpledialog.askstring(
-        "Acesso à sincronização",
-        "Digite a senha principal para acessar a sincronização:",
+        title,
+        prompt,
         show="•",
         parent=self,
     )
@@ -100,123 +93,71 @@ def _verify_sync_password(self):
     try:
         valid = folha.verify_password(password)
     except Exception as error:
-        self.log.exception("Falha ao validar a senha para acessar a sincronização")
-        messagebox.showerror("Acesso à sincronização", str(error), parent=self)
+        self.log.exception("Falha ao validar a senha para acessar uma área protegida")
+        messagebox.showerror(title, str(error), parent=self)
         return False
     finally:
         password = None
     if not valid:
         self.sync_limiter.failure()
-        self.log.warning("Senha recusada ao acessar a sincronização")
-        messagebox.showerror("Acesso à sincronização", "Senha principal incorreta.", parent=self)
+        self.log.warning("Senha principal recusada ao acessar uma área protegida")
+        messagebox.showerror(title, "Senha principal incorreta.", parent=self)
         return False
     self.sync_limiter.success()
     return True
 
 
+def _verify_sync_password(self):
+    return verify_main_password(
+        self,
+        "Acesso à sincronização",
+        "Digite a senha principal para acessar a sincronização:",
+    )
+
+
 # ---------------------------------------------------------------------- painel
 def build_dashboard(self, frame):
-    inner = _scrollable(frame)
-    hero = tk.Frame(inner, bg=t.SURFACE, highlightbackground=t.BORDER, highlightthickness=1)
-    hero.pack(fill="x")
-    tk.Frame(hero, bg=t.ORANGE, width=5).pack(side="left", fill="y")
-    logo = self._logo("dashboard", (300, 110))
-    if logo:
-        tk.Label(hero, image=logo, bg=t.SURFACE).pack(side="left", padx=(22, 26), pady=14)
-    welcome = tk.Frame(hero, bg=t.SURFACE)
-    welcome.pack(side="left", fill="both", expand=True, pady=14)
-    t.label(welcome, f"Bem-vindo, {self.session.user}", 18, t.PRIMARY_DARK, True).pack(anchor="w")
-    t.label(welcome, "Sistemas Revisa — Gerenciador Administrativo", 11, t.TEXT).pack(anchor="w")
-    t.label(welcome, "Escolha um módulo no menu Módulos ou nos quadros abaixo.",
-            10, t.MUTED).pack(anchor="w", pady=(6, 0))
-    cards = tk.Frame(inner, bg=t.BG)
-    cards.pack(fill="x", pady=(12, 0))
-    for column in range(4):
-        cards.columnconfigure(column, weight=1, uniform="cards")
+    canvas = tk.Frame(frame, bg="#F3F6FB")
+    canvas.pack(fill="both", expand=True)
+    logo_panel = tk.Frame(canvas, bg=t.SURFACE)
+    logo_panel.place(relx=0.5, rely=0.5, anchor="center")
+    logo_label = tk.Label(logo_panel, bg=t.SURFACE, borderwidth=0)
+    logo_label.pack()
 
-    payroll = folha.summary()
-    payroll_text = (f"{payroll['ativos']} colaboradores ativos ({payroll['total']} cadastrados)"
-                    if payroll["status"] == "ok" else f"Banco: {payroll['status']}")
-    energy = energia.summary()
-    energy_text = (f"{energy['ocupantes']} inquilinos • último mês lançado: {energy['ultimo_mes']}"
-                   if energy["status"] == "ok" else f"Banco: {energy['status']}")
-    backups = backup.list_backups(paths.backups_dir())
-    last_backup = backups[0][1].get("criado_em", "—") if backups and backups[0][1] else "nenhum backup registrado"
     try:
-        settings = config.load()
-        if settings["transferencia_habilitada"]:
-            state = transfer.load_state(paths.transfer_state_path())
-            transfer_text = ("Este computador é o titular dos dados" if state.get("titular", True)
-                             else "Dados entregues ao outro computador — módulos bloqueados")
-        else:
-            transfer_text = "Transferência entre computadores desativada"
-    except Exception as error:
-        transfer_text = f"Estado indisponível: {error}"
+        from PIL import Image, ImageTk
 
-    entries = (
-        ("Folha de Pagamento", payroll_text, f"Banco atualizado em {_fmt_time(folha.db_path())}", MODULE_FOLHA, "Abrir Folha"),
-        ("Energia e Água", energy_text,
-         "Acesso liberado pelo login principal",
-         MODULE_ENERGIA, "Abrir Energia e Água"),
-        ("Backups", f"Último backup: {last_backup}", f"{len(backups)} backup(s) no histórico", "backups", "Ver backups"),
-        ("Transferência", transfer_text, "Pasta e regras em Backups e Transferência", "backups", "Ver transferência"),
-    )
-    icons = {MODULE_FOLHA: "folha", MODULE_ENERGIA: "energia", "backups": "backups"}
-    for index, (title, line1, line2, target, action) in enumerate(entries):
-        box = tk.Frame(cards, bg=t.SURFACE, highlightbackground=t.BORDER, highlightthickness=1, padx=14, pady=12)
-        box.grid(row=0, column=index, sticky="nsew", padx=(0 if index == 0 else 6, 0 if index == 3 else 6))
-        head = tk.Frame(box, bg=t.SURFACE)
-        head.pack(fill="x")
-        image = self._icon(icons.get(target, "backups") if title != "Transferência" else "admin", 28)
-        if image:
-            tk.Label(head, image=image, bg=t.SURFACE).pack(side="left", padx=(0, 8))
-        t.label(head, title, 11, t.PRIMARY_DARK, True).pack(side="left")
-        tk.Frame(box, bg=t.BORDER, height=1).pack(fill="x", pady=(8, 8))
-        t.label(box, line1, 10, t.TEXT, wraplength=250, justify="left").pack(anchor="w")
-        t.label(box, line2, 9, t.MUTED, wraplength=250, justify="left").pack(anchor="w", pady=(2, 10))
-        t.button(box, action, lambda k=target: self.navigate(k)).pack(side="bottom", anchor="w")
+        with Image.open(paths.asset("logo_central_revisa.png")) as source:
+            original = source.convert("RGBA")
+    except OSError:
+        self.log.exception("Falha ao carregar a logo do painel principal")
+        t.label(canvas, "Não foi possível carregar a imagem do painel.", 11, t.DANGER,
+                bg="#F3F6FB").place(relx=0.5, rely=0.5, anchor="center")
+        return
 
-    shortcuts = t.card(inner, "Backups e senhas")
-    shortcuts.pack(fill="x", pady=(12, 0))
-    t.label(shortcuts, "Acesse aqui as operações de backup e as alterações de senha dos módulos.",
-            9, t.MUTED, wraplength=760, justify="left").pack(anchor="w")
-    backup_actions = tk.Frame(shortcuts, bg=t.SURFACE)
-    backup_actions.pack(fill="x", pady=(8, 10))
-    t.button(backup_actions, "Gerenciar e criar backups",
-             lambda: self.navigate("backups")).pack(side="left")
-    t.button(backup_actions, "Abrir pasta de backups",
-             self.open_backup_folder, kind="secondary").pack(side="left", padx=6)
-    password_actions = tk.Frame(shortcuts, bg=t.SURFACE)
-    password_actions.pack(fill="x")
-    t.button(password_actions, "Alterar senha principal",
-             lambda: self._menu_change_password(change_main_password),
-             kind="secondary").pack(side="left")
-    t.button(password_actions, "Alterar senha da Folha",
-             lambda: self.change_module_password(MODULE_FOLHA),
-             kind="secondary").pack(side="left", padx=6)
-    t.button(password_actions, "Alterar senha de Energia e Água",
-             lambda: self.change_module_password(MODULE_ENERGIA),
-             kind="secondary").pack(side="left")
+    last_size = None
 
-    text, color = _signing_status()
-    status = t.card(inner, "Alertas")
-    status.pack(fill="x", pady=(12, 0))
-    t.label(status, text, 10, color).pack(anchor="w")
-    legacy = []
-    try:
-        from .main_window import running_legacy_programs
-        legacy = running_legacy_programs()
-    except Exception:
-        pass
-    if legacy:
-        t.label(status, "Programas anteriores abertos (feche-os para evitar uso simultâneo dos dados): "
-                + ", ".join(legacy), 10, t.WARNING, wraplength=760, justify="left").pack(anchor="w", pady=(6, 0))
-    else:
-        t.label(status, "Nenhum programa anterior aberto.", 10, t.MUTED).pack(anchor="w", pady=(6, 0))
+    def resize_logo(event):
+        nonlocal last_size
+        size = min(int(event.width * 0.5), int(event.height * 0.96))
+        if size < 1 or size == last_size:
+            return
+        last_size = size
+        image = original.copy()
+        image.thumbnail((size, size), Image.Resampling.LANCZOS)
+        photo = ImageTk.PhotoImage(image, master=self)
+        self.images["dashboard"] = photo
+        logo_label.configure(image=photo, width=image.width, height=image.height)
+
+    canvas.bind("<Configure>", resize_logo)
 
 
 # ---------------------------------------------------------------------- backups e transferência
 def build_backups(self, frame):
+    toolbar = tk.Frame(frame, bg=t.BG)
+    toolbar.pack(fill="x")
+    t.button(toolbar, "← Voltar ao painel", lambda: self.navigate("painel"),
+             kind="secondary").pack(anchor="w", padx=12, pady=(8, 4))
     inner = _scrollable(frame)
     section = t.card(inner, "Backups verificáveis")
     section.pack(fill="x")
@@ -417,8 +358,9 @@ def _show_transfer_details(self, section):
         t.label(section, str(error), 10, t.DANGER, wraplength=760).pack(anchor="w")
         return
     folder = config.transfer_dir(settings)
-    t.label(section, "O sistema recebe automaticamente um pacote mais recente ao abrir. Fechar o programa "
-            "não transfere a vez: quando quiser trocar de computador, use o botão de envio abaixo. Use "
+    t.label(section, "O sistema recebe automaticamente um pacote mais recente ao abrir e envia os dois "
+            "bancos ao fechar; você pode reabrir no mesmo computador quantas vezes quiser. O botão abaixo "
+            "cede a vez ao outro computador. Use "
             "somente um computador por vez e espere o MEGA concluir a sincronização antes de abrir o outro. "
             "Senhas e configurações de assinatura nunca são transferidas.", 9, t.MUTED,
             wraplength=760, justify="left").pack(anchor="w")
@@ -446,7 +388,7 @@ def _show_transfer_details(self, section):
     message = t.label(section, "", 9, t.MUTED, wraplength=760, justify="left")
     message.pack(anchor="w", pady=(8, 0))
     message.configure(
-        text=("Este computador pode editar. Fechar o sistema não envia dados."
+        text=("Este computador pode editar. Ao fechar, os dois bancos serão enviados automaticamente."
               if holder else "Este computador aguarda o pacote mais recente e não pode editar."),
         fg=t.SUCCESS if holder else t.WARNING,
     )
@@ -462,7 +404,18 @@ def _show_transfer_details(self, section):
         t.button(section, "Retomar neste PC…",
                  self.resume_on_this_computer, kind="secondary").pack(anchor="w", pady=(10, 0))
 
-    t.button(section, "Abrir pasta compartilhada", lambda: os.startfile(str(folder)),
+    def open_shared_folder():
+        try:
+            if not Path(folder).is_dir():
+                raise FileNotFoundError(
+                    "A pasta não existe neste computador. Se a pasta do MEGA mudou de lugar, "
+                    "reconfigure a sincronização em Administração e Segurança.")
+            os.startfile(str(folder))
+        except OSError as error:
+            self.log.error("Falha ao abrir a pasta compartilhada %s: %s", folder, error)
+            messagebox.showerror("Pasta compartilhada", f"Não foi possível abrir:\n{folder}\n\n{error}", parent=self)
+
+    t.button(section, "Abrir pasta compartilhada", open_shared_folder,
              kind="secondary").pack(anchor="w", pady=(10, 0))
 
 
@@ -503,8 +456,8 @@ def build_admin(self, frame):
 
     transfer_box = t.card(inner, "Sincronização entre computadores")
     transfer_box.pack(fill="x", pady=(12, 0))
-    t.label(transfer_box, "A sincronização é protegida pela senha principal. O envio para outro computador "
-            "é manual; fechar o sistema não cede a vez.",
+    t.label(transfer_box, "A configuração é protegida pela senha principal. Com a sincronização ativa, "
+            "os dois bancos são enviados ao fechar e recebidos ao abrir no outro computador.",
             9, t.MUTED, wraplength=760, justify="left").pack(anchor="w")
     t.button(transfer_box, "Acessar sincronização…",
              lambda: _unlock_admin_sync(self, transfer_box), kind="secondary").pack(anchor="w", pady=(8, 0))
@@ -535,8 +488,8 @@ def _build_admin_sync_controls(self, transfer_box):
         try:
             if enable and not messagebox.askyesno(
                     "Sincronização entre computadores",
-                    "Ativar o recebimento automático ao abrir? O envio e a troca de computador serão "
-                    "feitos manualmente na tela Backups e Transferência.\n\n"
+                    "Ativar o envio automático dos bancos da Folha e de Energia e Água ao fechar "
+                    "e o recebimento ao abrir no outro computador?\n\n"
                     "Use somente um computador por vez e espere o MEGA terminar de sincronizar antes "
                     "de trocar de máquina.", default="no", parent=self):
                 return
@@ -669,6 +622,7 @@ def build_about(self, frame):
         ("Programa", str(paths.program_dir())),
         ("Dados do sistema", str(paths.app_data_dir())),
         ("Backup legado da Folha (MEGA)", str(getattr(folha.module(), "AUTO_BACKUP_DIR", "—"))),
+        ("Backup automático de Energia e Água (MEGA)", str(energia.exit_backup_path())),
     ))
     t.label(box, "Folha de Pagamento e Energia e Água funcionam dentro desta janela, com os mesmos bancos de "
             "dados e regras dos programas anteriores, que continuam disponíveis para reversão.", 9, t.MUTED,

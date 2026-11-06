@@ -151,7 +151,7 @@ def append_employee_report_pages(
 
     payslip = PdfReader(payslip_path)
     if payslip.is_encrypted:
-        raise ValueError('O holerite gerado está protegido por senha.')
+        raise ValueError('O demonstrativo de pagamento gerado está protegido por senha.')
     writer = PdfWriter()
     writer.append(payslip)
 
@@ -199,7 +199,7 @@ def append_employee_report_pages(
     available_height, target_index = max(available_pages)
     if available_height <= 0:
         raise ValueError(
-            'Não há espaço abaixo do holerite para incluir o relatório externo '
+            'Não há espaço abaixo do demonstrativo de pagamento para incluir o relatório externo '
             'na mesma página.')
 
     report_page = report_page_for_employee(indexes[0])
@@ -226,7 +226,7 @@ def append_employee_report_pages(
 
     output_directory = os.path.dirname(os.path.abspath(payslip_path))
     file_descriptor, temporary_path = tempfile.mkstemp(
-        prefix='holerite_anexo_', suffix='.pdf', dir=output_directory)
+        prefix='demonstrativo_pagamento_anexo_', suffix='.pdf', dir=output_directory)
     os.close(file_descriptor)
     try:
         with open(temporary_path, 'wb') as output:

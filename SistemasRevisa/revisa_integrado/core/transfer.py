@@ -2,7 +2,8 @@
 
 Regras:
 - O pacote é gravado numa pasta parcial; o manifesto vem depois dos bancos e o marcador PRONTO por último.
-- Depois de exportar, este computador deixa de ser o titular dos dados até importar um pacote mais novo.
+- Ao fechar, este computador exporta e continua titular, podendo reabrir. Só cede a vez no envio manual;
+  nesse caso fica sem editar até importar um pacote mais novo.
 - A importação é recusada se o pacote estiver incompleto, alterado, duplicado, antigo, for da própria
   máquina, for incompatível ou se os dados locais tiverem mudado desde a última sincronização.
 - Antes de importar, os bancos locais são copiados para um backup verificado.
@@ -116,12 +117,28 @@ def _keep_local_tables(key, imported, local):
                 dst.executemany(f'INSERT INTO "{table}" ({names}) VALUES ({", ".join("?" * len(columns))})', rows)
 
 
-def export_package(databases, transfer_dir, state, state_path, app_version):
-    """databases: {chave: caminho}. Os módulos devem estar fechados. Retorna a pasta do pacote."""
+def export_package(databases, transfer_dir, state, state_path, app_version, cede_turn=False):
+    """databases: {chave: caminho}. Os módulos devem estar fechados. Retorna a pasta do pacote.
+
+    Com cede_turn=False (fechamento normal) o computador continua titular e pode reabrir; a troca
+    de máquina só acontece quando o outro computador importa o pacote e exporta o seu."""
     if not state.get("titular", True):
         raise TransferError("Este computador não é o titular atual dos dados. Importe o pacote mais "
                             "recente antes de exportar.")
     transfer_dir = Path(transfer_dir)
+    for existing in list_packages(transfer_dir):
+        manifest, problems = read_package(existing)
+        if problems:
+            raise TransferError(
+                f"O pacote {existing.name} ainda não está disponível para validação: "
+                + "; ".join(problems))
+        if (manifest["maquina_origem"] != state["maquina_id"]
+                and manifest["id"] != state.get("ultimo_pacote")
+                and (state.get("ultimo_pacote_criado") is None
+                     or manifest.get("criado_em_epoch", 0) > state["ultimo_pacote_criado"])):
+            raise TransferError(
+                f"Há um pacote mais recente do outro computador ({existing.name}). "
+                "Receba os dados antes de enviar; em caso de conflito, reconcilie os bancos.")
     transfer_dir.mkdir(parents=True, exist_ok=True)
     stamp = time.strftime("%Y%m%d-%H%M%S")
     package_id = f"{PACKAGE_PREFIX}{stamp}-{_safe_name(state.get('computador'))}-{uuid.uuid4().hex[:8]}"
@@ -152,13 +169,17 @@ def export_package(databases, transfer_dir, state, state_path, app_version):
         "maquina_origem": state["maquina_id"],
         "computador_origem": state.get("computador", ""),
         "versao_app": app_version,
-        "pacote_anterior": state.get("ultimo_pacote"),
+        "pacote_anterior": state.get("pacote_base", state.get("ultimo_pacote")),
         "bancos": entries,
     }
     write_json_atomic(partial / MANIFEST, manifest)
     os.replace(partial, final)
     (final / READY_MARKER).write_text(backup.sha256_file(final / MANIFEST), encoding="ascii")
-    state["titular"] = False
+    # Último pacote que o outro computador comprovadamente conhece; reexportações sucessivas
+    # partem dele para que o outro PC não veja um falso conflito.
+    state.setdefault("pacote_base", state.get("ultimo_pacote"))
+    if cede_turn:
+        state["titular"] = False
     state["ultimo_pacote"] = package_id
     state["ultimo_pacote_criado"] = manifest["criado_em_epoch"]
     state["resumos_base"] = {key: info["resumo_logico"] for key, info in entries.items()}
@@ -220,21 +241,32 @@ def inspect_package(folder, state, local_databases, app_version):
     if manifest.get("maquina_origem") == state.get("maquina_id"):
         result["bloqueios"].append("pacote gerado por este mesmo computador")
     package_id = manifest.get("id")
-    if package_id == state.get("ultimo_pacote") or package_id in state.get("importados", []):
+    duplicate = package_id == state.get("ultimo_pacote") or package_id in state.get("importados", [])
+    if duplicate:
         result["bloqueios"].append("pacote já importado ou exportado por este computador (duplicado)")
     last_created = state.get("ultimo_pacote_criado")
-    if last_created is not None and manifest.get("criado_em_epoch", 0) <= last_created:
+    outdated = last_created is not None and manifest.get("criado_em_epoch", 0) <= last_created
+    if outdated:
         result["bloqueios"].append("pacote mais antigo que os dados já sincronizados neste computador")
     if str(manifest.get("versao_app", "")).split(".")[0] != str(app_version).split(".")[0]:
         result["bloqueios"].append(f"versão incompatível ({manifest.get('versao_app')} x {app_version})")
-    unknown = set(manifest.get("bancos", {})) - set(local_databases)
+    package_databases = set(manifest.get("bancos", {}))
+    missing = set(local_databases) - package_databases
+    if missing:
+        result["bloqueios"].append(
+            f"bancos ausentes no pacote: {', '.join(sorted(missing))}")
+    unknown = package_databases - set(local_databases)
     if unknown:
         result["bloqueios"].append(f"bancos desconhecidos no pacote: {', '.join(sorted(unknown))}")
+    # Pacotes já processados não disputam a versão atual; continuam recusados para importação.
+    if duplicate or outdated:
+        return result
     base = state.get("resumos_base") or {}
     if state.get("ultimo_pacote") is None:
         result["avisos"].append("primeira sincronização deste computador: não há referência para "
                                 "detectar alterações locais")
-    elif manifest.get("pacote_anterior") != state.get("ultimo_pacote"):
+    elif manifest.get("pacote_anterior") not in {
+            known for known in (state.get("ultimo_pacote"), state.get("pacote_base")) if known}:
         result["bloqueios"].append("conflito: o pacote não foi gerado a partir da última versão conhecida "
                                    "por este computador")
     for key in manifest.get("bancos", {}):
@@ -327,6 +359,7 @@ def import_package(folder, state, state_path, local_databases, backups_root, app
         raise
     state["titular"] = True
     state["ultimo_pacote"] = manifest["id"]
+    state["pacote_base"] = manifest["id"]
     state["ultimo_pacote_criado"] = manifest.get("criado_em_epoch")
     state["resumos_base"] = {key: entry["resumo_logico"] for key, entry in manifest["bancos"].items()}
     state["importados"] = (state.get("importados", []) + [manifest["id"]])[-200:]

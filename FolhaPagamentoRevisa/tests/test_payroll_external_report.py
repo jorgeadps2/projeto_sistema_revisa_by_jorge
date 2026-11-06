@@ -3,6 +3,7 @@ import sqlite3
 import sys
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 from unittest.mock import patch
 
@@ -26,6 +27,14 @@ class PayrollExternalReportTests(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp_dir.cleanup)
+        original_connect = APP.connect
+
+        def tracked_connect():
+            connection = original_connect()
+            self.addCleanup(connection.close)
+            return connection
+
+        self.enterContext(patch.object(APP, "connect", side_effect=tracked_connect))
         self.folder = Path(self.temp_dir.name)
         self.payslip_path = self.folder / "payslip.pdf"
         self.report_path = self.folder / "accounting.pdf"
@@ -41,6 +50,46 @@ class PayrollExternalReportTests(unittest.TestCase):
                 document.drawString(40, 780 - index * 20, line)
             document.showPage()
         document.save()
+
+    def test_remembers_selected_antares_folder_as_default(self):
+        mega_folder = self.folder / "MEGA" / "PDFs"
+        mega_folder.mkdir(parents=True)
+
+        with patch.object(APP, "DATA_DIR", str(self.folder)), \
+                patch.object(APP, "SIGN_CONFIG_NAME", "config.json"), \
+                patch.object(APP, "ACCOUNTING_PDF_DIR", str(self.folder / "old")):
+            APP.save_signing_config(pasta_pdf_antares=str(mega_folder))
+
+            self.assertEqual(
+                APP.accounting_pdf_initial_directory(), str(mega_folder))
+
+    def test_suggests_the_saved_pdf_for_each_payroll_period(self):
+        october_path = self.folder / "MEGA" / "outubro folha.pdf"
+        october_path.parent.mkdir(parents=True)
+        october_path.write_bytes(b"%PDF-")
+        connection = sqlite3.connect(":memory:")
+        connection.row_factory = sqlite3.Row
+        connection.execute("""CREATE TABLE payroll_accounting_reports(
+            year INTEGER, month INTEGER, path TEXT, pdf_data BLOB, updated_at TEXT,
+            PRIMARY KEY(year, month))""")
+        connection.execute(
+            "INSERT INTO payroll_accounting_reports(year,month,path) VALUES(2026,10,?)",
+            (str(october_path),))
+        self.addCleanup(connection.close)
+
+        with patch.object(APP, "connect", return_value=connection), \
+                patch.object(APP, "DATA_DIR", str(self.folder)), \
+                patch.object(APP, "SIGN_CONFIG_NAME", "config.json"), \
+                patch.object(APP, "ACCOUNTING_PDF_DIR", str(self.folder / "old")):
+            APP.save_signing_config(
+                pasta_pdf_antares=str(october_path.parent))
+
+            self.assertEqual(
+                APP.accounting_pdf_selection_defaults(2026, 10),
+                (str(october_path.parent), october_path.name))
+            self.assertEqual(
+                APP.accounting_pdf_selection_defaults(2026, 11),
+                (str(october_path.parent), None))
 
     def test_places_only_matching_employee_report_below_payslip_on_same_page(self):
         self.write_pdf(self.payslip_path, [["Holerite Ana Silva"]])
@@ -211,10 +260,11 @@ class PayrollExternalReportTests(unittest.TestCase):
         period_folder = self.folder / "2026" / "102026"
         period_folder.mkdir(parents=True)
         report_path = period_folder / "accounting.pdf"
-        report_path.touch()
+        self.write_pdf(report_path, [["Envelope Ana Silva"]])
         connection = sqlite3.connect(":memory:")
+        connection.row_factory = sqlite3.Row
         connection.execute("""CREATE TABLE payroll_accounting_reports(
-            year INTEGER, month INTEGER, path TEXT, updated_at TEXT,
+            year INTEGER, month INTEGER, path TEXT, pdf_data BLOB, updated_at TEXT,
             PRIMARY KEY(year, month))""")
         self.addCleanup(connection.close)
         app = object.__new__(APP.FolhaBase)
@@ -235,8 +285,9 @@ class PayrollExternalReportTests(unittest.TestCase):
         period_folder = self.folder / "2026" / "102026"
         period_folder.mkdir(parents=True)
         connection = sqlite3.connect(":memory:")
+        connection.row_factory = sqlite3.Row
         connection.execute("""CREATE TABLE payroll_accounting_reports(
-            year INTEGER, month INTEGER, path TEXT, updated_at TEXT,
+            year INTEGER, month INTEGER, path TEXT, pdf_data BLOB, updated_at TEXT,
             PRIMARY KEY(year, month))""")
         self.addCleanup(connection.close)
         app = object.__new__(APP.FolhaBase)
@@ -248,6 +299,144 @@ class PayrollExternalReportTests(unittest.TestCase):
 
         self.assertIsNone(found)
         choose_report.assert_not_called()
+
+    def create_database(self, path):
+        with closing(sqlite3.connect(path)):
+            pass
+        with patch.object(APP, "DB_PATH", str(path)):
+            APP.init_db()
+
+    def test_import_saves_pdf_and_recovers_it_without_source_or_database_changes(self):
+        database = self.folder / "source.db"
+        self.create_database(database)
+        self.write_pdf(self.report_path, [
+            ["Envelope Ana Silva", "Competência: Outubro de 2026",
+             "Valor líquido 1.234,56"]])
+        original = self.report_path.read_bytes()
+        app = object.__new__(APP.FolhaBase)
+        with patch.object(APP, "DB_PATH", str(database)), \
+                patch.object(APP, "DATA_DIR", str(self.folder / "other-pc")):
+            with APP.connect() as con:
+                con.execute("INSERT INTO employees(id,name) VALUES(1,'Ana Silva')")
+                con.execute("INSERT INTO payrolls(id,year,month) VALUES(1,2026,10)")
+                con.execute("""INSERT INTO payroll_items(
+                    payroll_id,employee_id,salary,total) VALUES(1,1,1000,1000)""")
+            app.save_accounting_pdf_values(2026, 10, [{
+                "employee_id": 1, "amount": 1234.56, "previous_salary": 1000,
+            }], str(self.report_path))
+            self.report_path.unlink()
+            before = database.read_bytes()
+            restored = app.accounting_report_path_for_period(2026, 10)
+            self.assertEqual(Path(restored).read_bytes(), original)
+            self.assertIn("Envelope Ana Silva", PdfReader(restored).pages[0].extract_text())
+            self.assertEqual(database.read_bytes(), before)
+            Path(restored).write_bytes(b"damaged cache")
+            restored = app.accounting_report_path_for_period(2026, 10)
+            self.assertEqual(Path(restored).read_bytes(), original)
+
+    def test_missing_source_rolls_back_salary_import(self):
+        database = self.folder / "source.db"
+        self.create_database(database)
+        app = object.__new__(APP.FolhaBase)
+        with patch.object(APP, "DB_PATH", str(database)):
+            with APP.connect() as con:
+                con.execute("INSERT INTO employees(id,name) VALUES(1,'Ana Silva')")
+                con.execute("INSERT INTO payrolls(id,year,month) VALUES(1,2026,10)")
+                con.execute("""INSERT INTO payroll_items(
+                    payroll_id,employee_id,salary,total) VALUES(1,1,1000,1000)""")
+            with self.assertRaises(FileNotFoundError):
+                app.save_accounting_pdf_values(2026, 10, [{
+                    "employee_id": 1, "amount": 1234.56, "previous_salary": 1000,
+                }], str(self.report_path))
+            with APP.connect() as con:
+                self.assertEqual(con.execute("SELECT salary FROM payroll_items").fetchone()[0], 1000)
+                self.assertEqual(con.execute("SELECT COUNT(*) FROM audit_log").fetchone()[0], 0)
+
+    def test_migration_embeds_available_legacy_pdf(self):
+        database = self.folder / "legacy.db"
+        self.write_pdf(self.report_path, [["Envelope Ana Silva"]])
+        original = self.report_path.read_bytes()
+        with closing(sqlite3.connect(database)) as con, con:
+            con.execute("""CREATE TABLE payroll_accounting_reports(
+                year INTEGER,month INTEGER,path TEXT,updated_at TEXT,
+                PRIMARY KEY(year,month))""")
+            con.execute("INSERT INTO payroll_accounting_reports VALUES(2026,10,?,NULL)",
+                        (str(self.report_path),))
+        with patch.object(APP, "DB_PATH", str(database)):
+            APP.init_db()
+            APP.init_db()
+            with APP.connect() as con:
+                self.assertEqual(con.execute(
+                    "SELECT pdf_data FROM payroll_accounting_reports").fetchone()[0], original)
+
+    def test_missing_legacy_pdf_requires_selection_instead_of_omitting_attachment(self):
+        database = self.folder / "legacy.db"
+        self.create_database(database)
+        app = object.__new__(APP.FolhaBase)
+        with patch.object(APP, "DB_PATH", str(database)), \
+                patch.object(APP, "ACCOUNTING_PDF_DIR", str(self.folder / "missing")), \
+                patch.object(APP.filedialog, "askopenfilename", return_value="") as choose:
+            with APP.connect() as con:
+                con.execute("""INSERT INTO payroll_accounting_reports(year,month,path)
+                    VALUES(2026,10,?)""", (str(self.report_path),))
+            with self.assertRaisesRegex(ValueError, "não está disponível"):
+                app.accounting_report_path_for_period(2026, 10)
+            choose.assert_called_once()
+
+    def test_selected_replacement_is_embedded(self):
+        database = self.folder / "legacy.db"
+        self.create_database(database)
+        self.write_pdf(self.report_path, [["Envelope Ana Silva"]])
+        app = object.__new__(APP.FolhaBase)
+        with patch.object(APP, "DB_PATH", str(database)), \
+                patch.object(APP, "ACCOUNTING_PDF_DIR", str(self.folder / "missing")), \
+                patch.object(APP.filedialog, "askopenfilename", return_value=str(self.report_path)):
+            with APP.connect() as con:
+                con.execute("""INSERT INTO payroll_accounting_reports(year,month,path)
+                    VALUES(2026,10,'missing.pdf')""")
+            self.assertEqual(app.accounting_report_path_for_period(2026, 10), str(self.report_path))
+            with APP.connect() as con:
+                self.assertEqual(con.execute(
+                    "SELECT pdf_data FROM payroll_accounting_reports").fetchone()[0],
+                    self.report_path.read_bytes())
+
+    def test_pdf_survives_real_transfer_and_is_attached_on_other_pc(self):
+        sys.path.insert(0, str(MODULE_DIR.parent / "SistemasRevisa"))
+        from revisa_integrado.core import transfer
+
+        source = self.folder / "source.db"
+        target = self.folder / "target.db"
+        self.create_database(source)
+        self.write_pdf(self.report_path, [
+            ["Envelope Ana Silva", "Competência: Outubro de 2026",
+             "Valor líquido 1.234,56"]])
+        with patch.object(APP, "DB_PATH", str(source)), APP.connect() as con:
+            con.execute("INSERT INTO employees(id,name) VALUES(1,'Ana Silva')")
+            con.execute("INSERT INTO payrolls(id,year,month) VALUES(1,2026,10)")
+            con.execute("""INSERT INTO payroll_items(
+                payroll_id,employee_id,salary,total) VALUES(1,1,1000,1000)""")
+            APP.store_accounting_report(con, 2026, 10, str(self.report_path))
+        sender = transfer.load_state(self.folder / "sender.json")
+        package = transfer.export_package(
+            {"folha": source}, self.folder / "packages", sender,
+            self.folder / "sender.json", "2.0.0")
+        self.report_path.unlink()
+        receiver = transfer.load_state(self.folder / "receiver.json", default_titular=False)
+        transfer.import_package(
+            package, receiver, self.folder / "receiver.json", {"folha": target},
+            self.folder / "backups", "2.0.0", accept_warnings=True)
+        app = object.__new__(APP.FolhaBase)
+        with patch.object(APP, "DB_PATH", str(target)), \
+                patch.object(APP, "DATA_DIR", str(self.folder / "other-pc")):
+            restored = app.accounting_report_path_for_period(2026, 10)
+            self.write_pdf(self.payslip_path, [["Demonstrativo de Pagamento Ana Silva"]])
+            before = transfer._digest("folha", target)
+            app.append_accounting_report_to_payslip(
+                2026, 10, str(self.payslip_path), 1, restored)
+            self.assertEqual(transfer._digest("folha", target), before)
+        text = PdfReader(self.payslip_path).pages[0].extract_text()
+        self.assertIn("Demonstrativo de Pagamento Ana Silva", text)
+        self.assertIn("Envelope Ana Silva", text)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,7 @@
 ﻿# -*- coding: utf-8 -*-
 """Folha de Pagamento - Revisa | Python + Tkinter + SQLite (Windows)"""
 import os, sys, json, sqlite3, shutil, subprocess, tempfile, math, hashlib, hmac, secrets, re
+import calendar
 import urllib.parse
 from datetime import datetime, timedelta
 from xml.sax.saxutils import escape as xml_escape
@@ -170,6 +171,25 @@ def save_signing_config(**values):
         json.dump(config,handle)
 
 
+def accounting_pdf_initial_directory():
+    configured=signing_config().get('pasta_pdf_antares')
+    if configured and os.path.isdir(configured):
+        return configured
+    if os.path.isdir(ACCOUNTING_PDF_DIR):
+        return ACCOUNTING_PDF_DIR
+    return DATA_DIR
+
+
+def accounting_pdf_selection_defaults(year,month):
+    with connect() as con:
+        report=con.execute(
+            'SELECT path FROM payroll_accounting_reports WHERE year=? AND month=?',
+            (year,month)).fetchone()
+    if report and report['path'] and os.path.isfile(report['path']):
+        return os.path.dirname(report['path']),os.path.basename(report['path'])
+    return accounting_pdf_initial_directory(),None
+
+
 def remember_signing_expiry(pfx,signer):
     # A validade só pode ser lida com a senha; fica guardada (sem a senha) para o aviso do painel.
     try:
@@ -251,7 +271,7 @@ def sign_pdf_file(path):
         metadata=signers.PdfSignatureMetadata(field_name='AssinaturaRevisa')
         field=fields.SigFieldSpec(
             'AssinaturaRevisa',on_page=-1,
-            box=(page_width-330,10,page_width-34,62))
+            box=(page_width-254,10,page_width-34,50))
         style=TextStampStyle(
             stamp_text='Assinado digitalmente\n%(signer)s\n%(ts)s',border_width=0.5,
             background=PdfImage(resource_path('assinatura_logo.png')),
@@ -353,6 +373,42 @@ def connect():
     return con
 
 
+def store_accounting_report(con,year,month,path):
+    with open(path,'rb') as source:
+        pdf_data=source.read()
+    if not pdf_data.startswith(b'%PDF-'):
+        raise ValueError(f'O relatório contábil não é um PDF válido: {path}')
+    stored=con.execute(
+        'SELECT pdf_data FROM payroll_accounting_reports WHERE year=? AND month=?',
+        (year,month)).fetchone()
+    if stored is not None and stored['pdf_data']==pdf_data:
+        return
+    con.execute('''INSERT OR REPLACE INTO payroll_accounting_reports(
+        year,month,path,pdf_data,updated_at) VALUES(?,?,?,?,CURRENT_TIMESTAMP)''',
+        (year,month,os.path.abspath(path),pdf_data))
+
+
+def cached_accounting_report(year,month,pdf_data):
+    digest=hashlib.sha256(pdf_data).hexdigest()
+    folder=os.path.join(DATA_DIR,'PDFs contabeis')
+    os.makedirs(folder,exist_ok=True)
+    path=os.path.join(folder,f'{year}_{month:02d}_{digest}.pdf')
+    if os.path.isfile(path):
+        with open(path,'rb') as cached:
+            if hashlib.sha256(cached.read()).hexdigest()==digest:
+                return path
+    temporary_path=None
+    try:
+        with tempfile.NamedTemporaryFile(dir=folder,suffix='.tmp',delete=False) as output:
+            temporary_path=output.name
+            output.write(pdf_data)
+        os.replace(temporary_path,path)
+    finally:
+        if temporary_path and os.path.exists(temporary_path):
+            os.remove(temporary_path)
+    return path
+
+
 def init_db():
     # If the pre-populated database ships next to the program, copy it once to the user data folder.
     bundled = resource_path('folha_pagamento.db')
@@ -398,6 +454,12 @@ def init_db():
             SELECT RAISE(ABORT,'Folha fechada: reabra antes de alterar os lançamentos.');
         END;
         ''')
+        report_columns={r['name'] for r in con.execute('PRAGMA table_info(payroll_accounting_reports)')}
+        if 'pdf_data' not in report_columns:
+            con.execute('ALTER TABLE payroll_accounting_reports ADD COLUMN pdf_data BLOB')
+            for report in con.execute('SELECT year,month,path FROM payroll_accounting_reports').fetchall():
+                if os.path.isfile(report['path']):
+                    store_accounting_report(con,report['year'],report['month'],report['path'])
         con.execute("UPDATE payrolls SET status='Em revisão' WHERE status!='Fechada'")
         employee_columns=[r['name'] for r in con.execute('PRAGMA table_info(employees)').fetchall()]
         if 'pix' not in employee_columns:
@@ -534,7 +596,7 @@ def whatsapp_chat_url(phone,name,year,month):
         raise ValueError('O telefone cadastrado não tem DDD e número válidos.')
     if not 1<=month<=12:
         raise ValueError('O mês selecionado é inválido.')
-    message='Segue seu Holerite Adminstrativo'
+    message='Segue seu Demonstrativo de Pagamento'
     return f'whatsapp://send?phone=55{ddd}{number}&text={urllib.parse.quote(message,safe="")}'
 
 
@@ -568,6 +630,19 @@ def normalize_employee_date(value):
         except ValueError:
             continue
     raise ValueError('Use o formato DD/MM/AAAA para as datas.')
+
+
+def meta_month_date_range(month_name, year_value):
+    if month_name not in MONTHS:
+        raise ValueError('Selecione um mês válido.')
+    year_text=year_value.strip()
+    if not re.fullmatch(r'\d{4}',year_text) or not 1900<=int(year_text)<=9999:
+        raise ValueError('Informe um ano válido entre 1900 e 9999.')
+    year=int(year_text)
+    month=MONTHS.index(month_name)+1
+    start=datetime(year,month,1).strftime('%Y-%m-%d')
+    end=datetime(year,month,calendar.monthrange(year,month)[1]).strftime('%Y-%m-%d')
+    return start,end
 
 
 def normalize_salary_register_period(value):
@@ -973,7 +1048,8 @@ class FolhaBase:
         self.current_payroll_year = today.year
         self.current_payroll_month = today.month
         self.search_var = tk.StringVar()
-        self.load_newer_mega_backup()
+        if not getattr(self,'centralized_actions',False):
+            self.load_newer_mega_backup()
         self._style()
         self._build()
         self.bind_all('<Map>',self._apply_dialog_branding,add='+')
@@ -1461,6 +1537,7 @@ class FolhaBase:
                 group,text=label,style=style,
                 command=command).pack(fill='x',pady=(0,4))
         self._add_tab_action_icons(group)
+        return group
 
     def _add_tab_action_icons(self,actions):
         for button in actions.winfo_children():
@@ -1682,7 +1759,7 @@ class FolhaBase:
         self._add_tab_action_icons(actions)
         self._tab_reports(actions,[
             ('Folha (PDF)',self.generate_payroll_pdf_dialog),
-            ('Holerites (PDF)',self.generate_payslips_dialog)])
+            ('Demonstrativos (PDF)',self.generate_payslips_dialog)])
 
     def _schedule_payroll_note_markers(self):
         if self.payroll_note_marker_refresh is None:
@@ -2557,9 +2634,7 @@ class FolhaBase:
                     'Importação local de PDF contábil',
                     f'{item["name"]} - {month:02d}/{year}: salário {brl(item["salary"])} para {brl(amount)}'))
             if source_path:
-                con.execute('''INSERT OR REPLACE INTO payroll_accounting_reports(
-                    year,month,path,updated_at) VALUES(?,?,?,CURRENT_TIMESTAMP)''',
-                    (year,month,os.path.abspath(source_path)))
+                store_accounting_report(con,year,month,source_path)
         return len(entries)
 
     def import_accounting_pdf_dialog(self):
@@ -2575,11 +2650,21 @@ class FolhaBase:
                 return
             items=con.execute('''SELECT i.*,e.name FROM payroll_items i
                 JOIN employees e ON e.id=i.employee_id WHERE i.payroll_id=?''',(payroll['id'],)).fetchall()
+        initialdir,initialfile=accounting_pdf_selection_defaults(year,month)
         path=filedialog.askopenfilename(
             parent=self,title='Selecionar PDF da contabilidade',
-            initialdir=ACCOUNTING_PDF_DIR,filetypes=[('PDF','*.pdf')])
+            initialdir=initialdir,initialfile=initialfile,
+            filetypes=[('PDF','*.pdf')])
         if not path:
             return
+        try:
+            save_signing_config(
+                pasta_pdf_antares=os.path.dirname(os.path.abspath(path)))
+        except OSError as ex:
+            messagebox.showerror(
+                'Pasta não salva',
+                f'Não foi possível lembrar a pasta do PDF do Antares DP: {ex}',
+                parent=self)
         try:
             entries,problems=read_payroll_pdf(
                 path,[dict(id=item['employee_id'],name=item['name']) for item in items],year,month)
@@ -3087,7 +3172,7 @@ class FolhaBase:
         header=ttk.Frame(body)
         header.pack(fill='x')
         ttk.Label(header,text='Empréstimos, adiantamentos salariais e Meta',font=('Segoe UI Semibold',15)).pack(side='left')
-        ttk.Label(body,text='Empréstimos e adiantamentos entram na folha. Meta é um controle separado, sem efeito na folha ou no holerite.',style='Sub.TLabel').pack(anchor='w',pady=(4,12))
+        ttk.Label(body,text='Empréstimos e adiantamentos entram na folha. Meta é um controle separado, sem efeito na folha ou no demonstrativo de pagamento.',style='Sub.TLabel').pack(anchor='w',pady=(4,12))
         self.loan_period_label=ttk.Label(body,style='Sub.TLabel')
         self.loan_period_label.pack(anchor='w',pady=(0,8))
         columns=('employee','kind','total_amount','principal','installments','monthly','start','current','notes')
@@ -3136,10 +3221,12 @@ class FolhaBase:
         loan_actions.pack(fill='both',expand=True)
         meta_actions=ttk.Frame(actions)
         self._build_meta(meta_page,meta_actions)
+        loan_report_groups={}
 
         def select_tab(event=None):
             nonlocal tree
-            is_meta=self.loan_notebook.index('current')==2
+            selected_tab=self.loan_notebook.index('current')
+            is_meta=selected_tab==2
             if is_meta:
                 loan_actions.pack_forget()
                 meta_actions.pack(fill='both',expand=True)
@@ -3147,7 +3234,12 @@ class FolhaBase:
             else:
                 meta_actions.pack_forget()
                 loan_actions.pack(fill='both',expand=True)
-                tree=self.loan_trees[('advances','loans')[self.loan_notebook.index('current')]]
+                for report_group in loan_report_groups.values():
+                    report_group.pack_forget()
+                report_group=loan_report_groups.get(selected_tab)
+                if report_group is not None:
+                    report_group.pack(side='bottom',fill='x',pady=(14,6))
+                tree=self.loan_trees[('advances','loans')[selected_tab]]
                 self.loans_tree=tree
                 self.loan_period_label.configure(
                     text=f'Exibindo lançamentos com parcela ou quitação em '
@@ -3507,19 +3599,25 @@ class FolhaBase:
             menu=self.loan_actions_menu).pack(fill='x',pady=(0,6))
         self.refresh_loans=refresh
         self._add_tab_action_icons(loan_actions)
-        self._tab_reports(loan_actions,[
-            ('Por colaborador (PDF)',self.generate_advance_report_dialog)])
+        loan_report_groups[0]=self._tab_reports(loan_actions,[
+            ('Adiantamentos (PDF)',lambda:self.generate_advance_report_dialog(ADVANCE_KIND))])
+        loan_report_groups[1]=self._tab_reports(loan_actions,[
+            ('Emprestimo (PDF)',lambda:self.generate_advance_report_dialog(LOAN_KIND))])
+        select_tab()
 
     def _build_meta(self,parent,actions):
         filters=ttk.Frame(parent,padding=(4,8))
         filters.pack(fill='x')
         today=datetime.now()
-        self.meta_start_var=tk.StringVar(value=today.replace(day=1).strftime('%d/%m/%Y'))
-        self.meta_end_var=tk.StringVar(value=today.strftime('%d/%m/%Y'))
-        ttk.Label(filters,text='De (DD/MM/AAAA):').grid(row=0,column=0,sticky='w')
-        ttk.Entry(filters,textvariable=self.meta_start_var,width=12).grid(row=0,column=1,padx=(4,10))
-        ttk.Label(filters,text='Até:').grid(row=0,column=2)
-        ttk.Entry(filters,textvariable=self.meta_end_var,width=12).grid(row=0,column=3,padx=(4,10))
+        ttk.Label(filters,text='Mês:').grid(row=0,column=0,sticky='w')
+        self.meta_month_box=ttk.Combobox(
+            filters,state='readonly',width=14,values=MONTHS)
+        self.meta_month_box.grid(row=0,column=1,padx=(4,10),sticky='w')
+        self.meta_month_box.current(today.month-1)
+        ttk.Label(filters,text='Ano:').grid(row=0,column=2,sticky='w')
+        self.meta_year_var=tk.StringVar(value=str(today.year))
+        ttk.Entry(filters,textvariable=self.meta_year_var,width=7).grid(
+            row=0,column=3,padx=(4,10),sticky='w')
         ttk.Label(filters,text='Colaborador:').grid(row=1,column=0,sticky='w',pady=(8,0))
         self.meta_employee_box=ttk.Combobox(filters,state='readonly',width=38)
         self.meta_employee_box.grid(row=1,column=1,columnspan=3,sticky='ew',pady=(8,0))
@@ -3563,10 +3661,8 @@ class FolhaBase:
         self._tab_reports(actions,[('Meta (PDF)',self.generate_meta_report)])
 
     def meta_filter_values(self):
-        start=normalize_employee_date(self.meta_start_var.get())
-        end=normalize_employee_date(self.meta_end_var.get())
-        if not start or not end or start>end:
-            raise ValueError('Informe a data inicial e final em ordem válida (DD/MM/AAAA).')
+        start,end=meta_month_date_range(
+            self.meta_month_box.get(),self.meta_year_var.get())
         index=self.meta_employee_box.current()
         if not 0<=index<len(self.meta_employee_ids):
             raise ValueError('Selecione um colaborador ou todos os colaboradores.')
@@ -3864,7 +3960,7 @@ class FolhaBase:
             Paragraph(f'Período: {employee_date_for_form(normalize_employee_date(start))} a '
                       f'{employee_date_for_form(normalize_employee_date(end))}',subtitle),
             Paragraph(xml_escape(employee_name),subtitle),
-            Paragraph('Controle separado: estes valores não integram a folha nem o holerite.',subtitle),
+            Paragraph('Controle separado: estes valores não integram a folha nem o demonstrativo de pagamento.',subtitle),
             Spacer(1,3*mm),
         ]
         data=[[Paragraph(label,heading) for label in ('Colaborador','Data','Valor total','Observações')]]
@@ -5302,7 +5398,7 @@ class FolhaBase:
         if employee_id is not None:
             rows=[r for r in rows if r['employee_id']==employee_id]
         if not rows:
-            raise ValueError('Nenhum lançamento encontrado para gerar o holerite.')
+            raise ValueError('Nenhum lançamento encontrado para gerar o demonstrativo de pagamento.')
         with connect() as con:
             info={r['id']:r for r in con.execute('SELECT id,role,code,admission_date FROM employees')}
         styles=getSampleStyleSheet()
@@ -5314,7 +5410,7 @@ class FolhaBase:
         page_size=portrait(A4)
         earnings=[('Salário','salary'),('PF / adicional','pf'),('Hora extra','overtime'),('Férias','vacation'),('13º salário','thirteenth')]
         deductions=[('Marmitex','marmitex'),('Adiantamento Salarial','advances'),('Farmácia','pharmacy'),('Empréstimo','loan'),('Outros descontos','other_deductions')]
-        document=SimpleDocTemplate(path,pagesize=page_size,rightMargin=12*mm,leftMargin=12*mm,topMargin=24*mm,bottomMargin=18*mm,title=f'Holerite - {MONTHS[month-1]} {year}',author=AUTHOR)
+        document=SimpleDocTemplate(path,pagesize=page_size,rightMargin=12*mm,leftMargin=12*mm,topMargin=24*mm,bottomMargin=18*mm,title=f'Demonstrativo de Pagamento - {MONTHS[month-1]} {year}',author=AUTHOR)
         story=[]
         for index,row in enumerate(rows):
             emp=info.get(row['employee_id'])
@@ -5466,13 +5562,13 @@ class FolhaBase:
                 parent=self)
             return
         win=tk.Toplevel(self)
-        win.title('Holerites (PDF)')
+        win.title('Demonstrativos de Pagamento (PDF)')
         win.transient(self)
         win.grab_set()
         body=ttk.Frame(win,padding=20)
         body.pack(fill='both',expand=True)
         ttk.Label(
-            body,text=f'Holerites — {MONTHS[month-1]} de {year}',
+            body,text=f'Demonstrativos de Pagamento — {MONTHS[month-1]} de {year}',
             font=('Segoe UI Semibold',12)).pack(anchor='w',pady=(0,12))
         ttk.Label(body,text='Colaborador:').pack(anchor='w',pady=(0,4))
         choice=ttk.Combobox(
@@ -5489,14 +5585,14 @@ class FolhaBase:
                 return
             employee_id=None if index==0 else employees[index-1]['id']
             try:
-                path=temporary_pdf_path(f'holerites_{year}_{month:02d}_')
+                path=temporary_pdf_path(f'demonstrativos_pagamento_{year}_{month:02d}_')
                 report_path=self.accounting_report_path_for_period(year,month)
                 self.write_payslips_with_accounting_report(
                     year,month,path,employee_id,report_path)
                 open_pdf(path)
             except Exception as ex:
                 messagebox.showerror(
-                    'Erro ao gerar holerite',
+                    'Erro ao gerar demonstrativo de pagamento',
                     f'Não foi possível gerar ou abrir o PDF: {ex}',parent=win)
                 return
             win.destroy()
@@ -5512,12 +5608,17 @@ class FolhaBase:
     def accounting_report_path_for_period(self,year,month):
         with connect() as con:
             row=con.execute(
-                'SELECT path FROM payroll_accounting_reports WHERE year=? AND month=?',
+                'SELECT path,pdf_data FROM payroll_accounting_reports WHERE year=? AND month=?',
                 (year,month)).fetchone()
+        if row and row['pdf_data'] is not None:
+            return cached_accounting_report(year,month,row['pdf_data'])
         if row and os.path.isfile(row['path']):
+            with connect() as con:
+                store_accounting_report(con,year,month,row['path'])
             return row['path']
         period_folder=os.path.join(
             ACCOUNTING_PDF_DIR,str(year),f'{month:02d}{year}')
+        initialdir=period_folder if os.path.isdir(period_folder) else DATA_DIR
         if os.path.isdir(period_folder):
             reports=sorted(
                 os.path.join(period_folder,name)
@@ -5527,26 +5628,31 @@ class FolhaBase:
             if len(reports)==1:
                 report_path=str(reports[0])
                 with connect() as con:
-                    con.execute('''INSERT OR REPLACE INTO payroll_accounting_reports(
-                        year,month,path,updated_at) VALUES(?,?,?,CURRENT_TIMESTAMP)''',
-                        (year,month,os.path.abspath(report_path)))
+                    store_accounting_report(con,year,month,report_path)
                 return report_path
-            if not reports:
+            if not reports and row is None:
                 return None
-            initialdir=period_folder
-        else:
+        elif row is None:
             return None
         path=filedialog.askopenfilename(
             parent=self,
-            title='Selecionar relatório externo para anexar ao holerite',
+            title='Localizar PDF contábil da competência para anexar ao demonstrativo',
             initialdir=initialdir,
             filetypes=[('PDF','*.pdf')])
+        if not path and row is not None:
+            raise ValueError(
+                'O PDF contábil desta competência não está disponível neste computador. '
+                'Selecione o arquivo original para que ele acompanhe a sincronização. '
+                'O demonstrativo não foi gerado sem o anexo.')
+        if path:
+            with connect() as con:
+                store_accounting_report(con,year,month,path)
         return path or None
 
     def append_accounting_report_to_payslip(
             self,year,month,path,employee_id,report_path):
         if os.path.abspath(path)==os.path.abspath(report_path):
-            raise ValueError('O relatório externo e o holerite precisam ser arquivos diferentes.')
+            raise ValueError('O relatório externo e o demonstrativo de pagamento precisam ser arquivos diferentes.')
         with connect() as con:
             payroll=con.execute(
                 'SELECT id FROM payrolls WHERE year=? AND month=?',
@@ -5560,9 +5666,7 @@ class FolhaBase:
         append_employee_report_pages(
             report_path,path,employee_id,employees,year,month)
         with connect() as con:
-            con.execute('''INSERT OR REPLACE INTO payroll_accounting_reports(
-                year,month,path,updated_at) VALUES(?,?,?,CURRENT_TIMESTAMP)''',
-                (year,month,os.path.abspath(report_path)))
+            store_accounting_report(con,year,month,report_path)
 
     def write_payslips_with_accounting_report(
             self,year,month,path,employee_id,report_path):
@@ -5578,16 +5682,16 @@ class FolhaBase:
         if payroll is None:
             raise ValueError(f'Não há folha criada para {MONTHS[month-1]} de {year}.')
         if not rows:
-            raise ValueError('Nenhum lançamento encontrado para gerar o holerite.')
+            raise ValueError('Nenhum lançamento encontrado para gerar o demonstrativo de pagamento.')
         writer_path=os.path.abspath(path)
         with tempfile.TemporaryDirectory(
-                prefix=f'holerites_{year}_{month:02d}_') as temporary_folder:
+                prefix=f'demonstrativos_pagamento_{year}_{month:02d}_') as temporary_folder:
             from pypdf import PdfWriter
 
             writer=PdfWriter()
             for row in rows:
                 employee_path=os.path.join(
-                    temporary_folder,f'holerite_{row["employee_id"]}.pdf')
+                    temporary_folder,f'demonstrativo_pagamento_{row["employee_id"]}.pdf')
                 self.write_payslips_pdf(
                     year,month,employee_path,row['employee_id'])
                 self.append_accounting_report_to_payslip(
@@ -5605,7 +5709,7 @@ class FolhaBase:
         if not selection:
             messagebox.showinfo(
                 'Selecione um colaborador',
-                'Selecione o colaborador na folha para preparar o holerite.',
+                'Selecione o colaborador na folha para preparar o demonstrativo de pagamento.',
                 parent=self)
             return
         year,month=period
@@ -5632,12 +5736,16 @@ class FolhaBase:
                 f'{ex}\n\nConfira o telefone do colaborador no cadastro.',
                 parent=self)
             return
-        report_path=self.accounting_report_path_for_period(year,month)
+        try:
+            report_path=self.accounting_report_path_for_period(year,month)
+        except (OSError,ValueError,sqlite3.Error) as ex:
+            messagebox.showerror('Erro ao localizar PDF contábil',str(ex),parent=self)
+            return
         safe_name=re.sub(r'[<>:"/\\|?*]+','_',employee['name']).strip(' .')
         path=filedialog.asksaveasfilename(
             parent=self,
-            title='Salvar holerite para enviar pelo WhatsApp',
-            initialfile=f'Holerite_{safe_name}_{month:02d}_{year}.pdf',
+            title='Salvar demonstrativo de pagamento para enviar pelo WhatsApp',
+            initialfile=f'Demonstrativo_de_Pagamento_{safe_name}_{month:02d}_{year}.pdf',
             defaultextension='.pdf',
             filetypes=[('Arquivo PDF','*.pdf')])
         if not path:
@@ -5654,12 +5762,12 @@ class FolhaBase:
         except Exception as ex:
             messagebox.showerror(
                 'Erro ao preparar envio',
-                f'Não foi possível preparar o holerite ou abrir o WhatsApp: {ex}\n\n'
+                f'Não foi possível preparar o demonstrativo de pagamento ou abrir o WhatsApp: {ex}\n\n'
                 f'O arquivo, se já foi gerado, está em:\n{path}',
                 parent=self)
             return
         messagebox.showinfo(
-            'Holerite pronto',
+            'Demonstrativo de pagamento pronto',
             'A conversa do colaborador foi aberta no WhatsApp e o PDF foi salvo.\n\n'
             'O PDF está selecionado na pasta. Arraste-o para a conversa, confira o destinatário e confirme o envio. '
             'O programa não envia a mensagem sem sua confirmação.',
@@ -5694,7 +5802,7 @@ class FolhaBase:
             return
 
         win=tk.Toplevel(self)
-        win.title('Salvar holerites em massa')
+        win.title('Salvar demonstrativos de pagamento em massa')
         win.configure(bg=BG)
         win.transient(self)
         win.grab_set()
@@ -5752,11 +5860,15 @@ class FolhaBase:
                     'Marque pelo menos um colaborador.',
                     parent=win)
                 return
-            report_path=self.accounting_report_path_for_period(year,month)
+            try:
+                report_path=self.accounting_report_path_for_period(year,month)
+            except (OSError,ValueError,sqlite3.Error) as ex:
+                messagebox.showerror('Erro ao localizar PDF contábil',str(ex),parent=win)
+                return
             try:
                 os.makedirs(ZAP_REPORTS_DIR,exist_ok=True)
                 folder=tempfile.mkdtemp(
-                    prefix=f'Holerites_{year}_{month:02d}_',dir=ZAP_REPORTS_DIR)
+                    prefix=f'Demonstrativos_de_Pagamento_{year}_{month:02d}_',dir=ZAP_REPORTS_DIR)
             except OSError as ex:
                 messagebox.showerror(
                     'Erro ao criar pasta',str(ex),parent=win)
@@ -5768,7 +5880,7 @@ class FolhaBase:
                     r'[<>:"/\\|?*]+','_',employee['name']).strip(' .')
                 path=os.path.join(
                     folder,
-                    f'Holerite_{safe_name}_{employee["id"]}_{month:02d}_{year}.pdf')
+                    f'Demonstrativo_de_Pagamento_{safe_name}_{employee["id"]}_{month:02d}_{year}.pdf')
                 try:
                     self.write_payslips_pdf(
                         year,month,path,employee['id'])
@@ -5781,7 +5893,7 @@ class FolhaBase:
                     generated.append((employee,path))
             if errors:
                 messagebox.showwarning(
-                    'Alguns holerites não foram gerados',
+                    'Alguns demonstrativos de pagamento não foram gerados',
                     'Não foi possível gerar:\n'+'\n'.join(errors),
                     parent=win)
             if not generated:
@@ -5797,7 +5909,7 @@ class FolhaBase:
 
     def saved_payslips_whatsapp_dialog(self,year,month,generated):
         win=tk.Toplevel(self)
-        win.title(f'Holerites salvos — {month:02d}/{year}')
+        win.title(f'Demonstrativos de pagamento salvos — {month:02d}/{year}')
         win.transient(self)
         win.geometry('860x480')
         win.minsize(680,360)
@@ -5806,7 +5918,7 @@ class FolhaBase:
         body.columnconfigure(0,weight=1)
         body.rowconfigure(3,weight=1)
         ttk.Label(
-            body,text=f'{len(generated)} holerite(s) salvo(s)',
+            body,text=f'{len(generated)} demonstrativo(s) de pagamento salvo(s)',
             font=('Segoe UI Semibold',14)).grid(row=0,column=0,sticky='w')
         instructions=ttk.Label(
             body,text='Selecione o colaborador e clique em Abrir WhatsApp do selecionado.\n'
@@ -6607,13 +6719,17 @@ class FolhaBase:
                 })
         return report
 
-    def write_employee_general_report_pdf(self,year,month,path,employee_id=None,only_month=None):
+    def write_employee_general_report_pdf(
+            self,year,month,path,employee_id=None,only_month=None,report_kind=None):
+        if report_kind is not None and report_kind not in LOAN_KINDS:
+            raise ValueError('Selecione empréstimos ou adiantamentos para o relatório.')
         if only_month is not None:
             year,month=only_month
         cutoff=(year,month)
         rows=[]
-        for report_kind in LOAN_KINDS:
-            rows.extend(self.loan_report_data(year,month,report_kind,employee_id))
+        report_kinds=(report_kind,) if report_kind is not None else LOAN_KINDS
+        for kind in report_kinds:
+            rows.extend(self.loan_report_data(year,month,kind,employee_id))
         with connect() as con:
             employees={row['id']:row for row in con.execute(
                 'SELECT id,code,name,active FROM employees').fetchall()}
@@ -6708,7 +6824,11 @@ class FolhaBase:
         def headers(*labels):
             return [Paragraph(label,header_style) for label in labels]
 
-        report_name='Relatório Geral por Colaborador'
+        report_names={
+            LOAN_KIND:'Relatório de Empréstimos por Colaborador',
+            ADVANCE_KIND:'Relatório de Adiantamentos por Colaborador',
+        }
+        report_name=report_names.get(report_kind,'Relatório Geral por Colaborador')
         document=SimpleDocTemplate(
             path,pagesize=page_size,rightMargin=12*mm,leftMargin=12*mm,
             topMargin=24*mm,bottomMargin=18*mm,title=report_name,author=AUTHOR)
@@ -6753,9 +6873,16 @@ class FolhaBase:
             header.keepWithNext=True
             block.append(header)
             if not employee_rows:
+                empty_employee_text={
+                    LOAN_KIND:'Este colaborador não possui empréstimos cadastrados.',
+                    ADVANCE_KIND:'Este colaborador não possui adiantamentos cadastrados.',
+                }
                 block.extend([
                     Spacer(1,3*mm),
-                    Paragraph('Este colaborador não possui empréstimos ou adiantamentos cadastrados.',cell_style),
+                    Paragraph(empty_employee_text.get(
+                        report_kind,
+                        'Este colaborador não possui empréstimos ou adiantamentos cadastrados.'),
+                        cell_style),
                 ])
                 sections.append(block)
                 continue
@@ -6813,20 +6940,34 @@ class FolhaBase:
             highlight_total=ParagraphStyle(
                 'EmployeeGeneralHighlightTotal',parent=highlight_value,
                 fontSize=7,leading=9,textColor=colors.HexColor('#b91c1c'))
-            overview=Table([
-                [Paragraph('Empréstimos: falta pagar',highlight_label),
-                 Paragraph('Adiantamentos: falta pagar',highlight_label),
-                 Paragraph('TOTAL QUE AINDA FALTA PAGAR',highlight_label),
-                 Paragraph('Total já pago (empréstimos + adiantamentos)',highlight_label)],
-                [Paragraph(brl(total(loans,'balance')),highlight_value),
-                 Paragraph(brl(total(advances,'balance')),highlight_value),
-                 Paragraph(brl(balance),highlight_total),
-                 Paragraph(brl(total(employee_rows,'paid')),highlight_value)],
-            ],colWidths=[usable_width/4]*4,hAlign='LEFT')
+            if report_kind is None:
+                overview_data=[
+                    [Paragraph('Empréstimos: falta pagar',highlight_label),
+                     Paragraph('Adiantamentos: falta pagar',highlight_label),
+                     Paragraph('TOTAL QUE AINDA FALTA PAGAR',highlight_label),
+                     Paragraph('Total já pago (empréstimos + adiantamentos)',highlight_label)],
+                    [Paragraph(brl(total(loans,'balance')),highlight_value),
+                     Paragraph(brl(total(advances,'balance')),highlight_value),
+                     Paragraph(brl(balance),highlight_total),
+                     Paragraph(brl(total(employee_rows,'paid')),highlight_value)],
+                ]
+                overview_widths=[usable_width/4]*4
+            else:
+                selected_rows=loans if report_kind==LOAN_KIND else advances
+                label='Empréstimos' if report_kind==LOAN_KIND else 'Adiantamentos'
+                overview_data=[
+                    [Paragraph(f'{label}: total contratado',highlight_label),
+                     Paragraph('Total já pago',highlight_label),
+                     Paragraph('FALTA PAGAR',highlight_label)],
+                    [Paragraph(brl(total(selected_rows,'principal')),highlight_value),
+                     Paragraph(brl(total(selected_rows,'paid')),highlight_value),
+                     Paragraph(brl(balance),highlight_total)],
+                ]
+                overview_widths=[usable_width/3]*3
+            overview=Table(overview_data,colWidths=overview_widths,hAlign='LEFT')
             overview.setStyle(TableStyle([
                 ('BACKGROUND',(0,0),(-1,-1),colors.HexColor('#eaf1fb')),
                 ('BOX',(0,0),(-1,-1),1.2,colors.HexColor(NAVY)),
-                ('BACKGROUND',(2,0),(2,-1),colors.HexColor('#fff1f1')),
                 ('LINEAFTER',(0,0),(-2,-1),0.4,colors.HexColor('#b6c6dd')),
                 ('VALIGN',(0,0),(-1,-1),'MIDDLE'),
                 ('TOPPADDING',(0,0),(-1,0),5),
@@ -6834,6 +6975,10 @@ class FolhaBase:
                 ('TOPPADDING',(0,1),(-1,1),1),
                 ('BOTTOMPADDING',(0,1),(-1,1),6),
             ]))
+            if report_kind is None:
+                overview.setStyle(TableStyle([
+                    ('BACKGROUND',(2,0),(2,-1),colors.HexColor('#fff1f1')),
+                ]))
             block.extend([
                 Spacer(1,1.5*mm),Paragraph('Resumo geral do colaborador',section_style),overview,
                 Spacer(1,7*mm)])
@@ -6904,24 +7049,40 @@ class FolhaBase:
                 PageBreak(),
             ])
         if not order:
-            story.append(Paragraph('Não há empréstimos ou adiantamentos cadastrados para a seleção.',cell_style))
+            empty_report_text={
+                LOAN_KIND:'Não há empréstimos cadastrados para a seleção.',
+                ADVANCE_KIND:'Não há adiantamentos cadastrados para a seleção.',
+            }
+            story.append(Paragraph(
+                empty_report_text.get(
+                    report_kind,
+                    'Não há empréstimos ou adiantamentos cadastrados para a seleção.'),
+                cell_style))
         for block in sections:
             story.extend(block)
         document.build(story,onFirstPage=draw_page,onLaterPages=draw_page,canvasmaker=NumberedReportCanvas)
         return len(order),total_balance
 
-    def generate_advance_report_dialog(self):
+    def generate_advance_report_dialog(self,report_kind=None):
         period=self.selected_payroll_period()
         if period is None:
             return
         year,month=period
+        report_titles={
+            LOAN_KIND:'Relatório de Empréstimos por Colaborador',
+            ADVANCE_KIND:'Relatório de Adiantamentos por Colaborador',
+        }
+        report_title=report_titles.get(report_kind,'Relatório Geral por Colaborador')
+        report_scope={
+            LOAN_KIND:'Empréstimos',
+            ADVANCE_KIND:'Adiantamentos',
+        }.get(report_kind,'Empréstimos e adiantamentos')
         with connect() as con:
             employees=con.execute(
                 'SELECT id,name FROM employees ORDER BY active DESC,name COLLATE NOCASE').fetchall()
         choices=['Todos os colaboradores']+[f'{employee["name"]} (#{employee["id"]})' for employee in employees]
         employee_ids=[None]+[employee['id'] for employee in employees]
         dialog=tk.Toplevel(self)
-        report_title='Relatório Geral por Colaborador'
         dialog.title(report_title)
         dialog.configure(bg=BG)
         dialog.transient(self)
@@ -6930,7 +7091,7 @@ class FolhaBase:
         fields=ttk.Frame(dialog,padding=20)
         fields.pack(fill='both',expand=True)
         ttk.Label(
-            fields,text=f'Empréstimos e adiantamentos • Saldo em {MONTHS[month-1]} de {year}',
+            fields,text=f'{report_scope} • Saldo em {MONTHS[month-1]} de {year}',
             font=('Segoe UI Semibold',14)).pack(anchor='w',pady=(0,12))
         ttk.Label(fields,text='Funcionário / colaborador').pack(anchor='w')
         employee_var=tk.StringVar(value=choices[0])
@@ -6981,11 +7142,16 @@ class FolhaBase:
                     messagebox.showerror('Ano inválido','Informe um ano válido.',parent=dialog)
                     return
             suffix=f'_{employee_id}' if employee_id is not None else '_todos'
+            filename_prefix={
+                LOAN_KIND:'relatorio_emprestimos',
+                ADVANCE_KIND:'relatorio_adiantamentos',
+            }.get(report_kind,'relatorio_geral_colaborador')
             path=temporary_pdf_path(
-                f'relatorio_geral_colaborador_{year}_{month:02d}{suffix}_')
+                f'{filename_prefix}_{year}_{month:02d}{suffix}_')
             try:
                 self.write_employee_general_report_pdf(
-                    year,month,path,employee_id=employee_id,only_month=only_month)
+                    year,month,path,employee_id=employee_id,only_month=only_month,
+                    report_kind=report_kind)
                 open_pdf(path)
             except Exception as ex:
                 messagebox.showerror(

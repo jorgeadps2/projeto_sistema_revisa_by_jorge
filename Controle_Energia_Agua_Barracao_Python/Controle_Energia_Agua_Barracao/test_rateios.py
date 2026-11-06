@@ -48,6 +48,12 @@ class RateiosTest(unittest.TestCase):
         self.assertEqual(sistema.chave_nome_ocupante(correto),
                          sistema.chave_nome_ocupante(corrompido))
 
+    def test_lancamento_so_vence_depois_do_dia_10_do_mes_seguinte(self):
+        self.assertFalse(sistema.lancamento_vencido(2026,1,date(2026,2,10)))
+        self.assertTrue(sistema.lancamento_vencido(2026,1,date(2026,2,11)))
+        self.assertFalse(sistema.lancamento_vencido(2026,12,date(2027,1,10)))
+        self.assertTrue(sistema.lancamento_vencido(2026,12,date(2027,1,11)))
+
     def test_nao_cadastra_ocupante_com_nome_corrompido_duplicado(self):
         self.app.oc_nome=SimpleNamespace(get=lambda:"MARCOS - MM FULG\u00c3\u2022ES")
         self.app.atualizar_ocupantes=Mock()
@@ -76,6 +82,61 @@ class RateiosTest(unittest.TestCase):
             {r["name"] for r in self.app.conn.execute("PRAGMA table_info(ocupantes)")},
         )
 
+    def test_aviso_de_leitura_pode_ser_alternado_por_inquilino(self):
+        ocupante_id=self.row(self.ids[0])["ocupante_id"]
+        self.app.oc_tree=Mock()
+        self.app.oc_tree.identify_region.return_value="cell"
+        self.app.oc_tree.identify_row.return_value=str(ocupante_id)
+        self.app.oc_tree.identify_column.return_value="#10"
+        self.app.atualizar_ocupantes=Mock()
+        self.app.editar_celula_inquilino(SimpleNamespace(x=20,y=10))
+        self.assertEqual(
+            self.app.conn.execute(
+                "SELECT avisar_leitura FROM ocupantes WHERE id=?",(ocupante_id,)
+            ).fetchone()["avisar_leitura"],
+            0,
+        )
+        self.app.atualizar_ocupantes.assert_called_once()
+
+    def test_migracao_preserva_quais_inquilinos_recebiam_aviso(self):
+        app=sistema.App.__new__(sistema.App)
+        app.conn=sqlite3.connect(":memory:")
+        app.conn.row_factory=sqlite3.Row
+        self.addCleanup(app.conn.close)
+        hoje=date.today()
+        app.conn.executescript(
+            """
+            CREATE TABLE meses(id INTEGER PRIMARY KEY, ano INTEGER, mes INTEGER);
+            CREATE TABLE ocupantes(
+                id INTEGER PRIMARY KEY, nome TEXT, ativo INTEGER, observacoes TEXT
+            );
+            CREATE TABLE lancamentos(
+                id INTEGER PRIMARY KEY, mes_id INTEGER, ocupante_id INTEGER,
+                leitura_inicial REAL, leitura_final REAL, tarifa_kwh REAL,
+                numero_pessoas INTEGER, agua_partes REAL, aluguel REAL,
+                outras_despesas REAL, ajuste REAL, observacoes TEXT,
+                cobrar_energia INTEGER
+            );
+            """
+        )
+        app.conn.execute("INSERT INTO meses VALUES(1,?,?)",(hoje.year,hoje.month))
+        app.conn.executemany(
+            "INSERT INTO ocupantes(id,nome,ativo,observacoes) VALUES(?,?,1,'')",
+            ((1,"COM AVISO"),(2,"SEM AVISO")),
+        )
+        app.conn.executemany(
+            "INSERT INTO lancamentos VALUES(?,1,?,0,0,0,0,0,?,0,0,'',?)",
+            ((1,1,100,1),(2,2,100,0)),
+        )
+        app.criar_banco()
+        flags={
+            row["nome"]:row["avisar_leitura"]
+            for row in app.conn.execute(
+                "SELECT nome,avisar_leitura FROM ocupantes WHERE id IN (1,2)"
+            )
+        }
+        self.assertEqual(flags,{"COM AVISO":1,"SEM AVISO":0})
+
     def test_cobranca_padrao_exibida_corresponde_ao_mes_selecionado(self):
         ocupante=self.app.conn.execute(
             "SELECT * FROM ocupantes WHERE id=?",(self.row(self.ids[0])["ocupante_id"],)
@@ -97,7 +158,7 @@ class RateiosTest(unittest.TestCase):
         self.app.oc_tree=Mock()
         self.app.oc_tree.identify_region.return_value="cell"
         self.app.oc_tree.identify_row.return_value=str(ocupante_id)
-        self.app.oc_tree.identify_column.return_value="#4"
+        self.app.oc_tree.identify_column.return_value="#5"
         self.app.oc_tree.set.side_effect=lambda ident,col: (
             "Sim" if col!="cobrar_agua" else "Não"
         )
@@ -150,6 +211,79 @@ class RateiosTest(unittest.TestCase):
         self.app.agua_pessoas_var.set.assert_called_with("7")
         self.app.conn.execute("DELETE FROM lancamentos WHERE mes_id=?",(outro,))
         self.assertEqual(self.app.contas_mes(outro)["total_pessoas_agua"],0)
+
+    def test_pessoas_configuradas_em_inquilinos_valem_do_mes_selecionado_em_diante(self):
+        ocupante_id=self.row(self.ids[0])["ocupante_id"]
+        fevereiro=self.app.garantir_mes(2026,2)
+        marco=self.app.garantir_mes(2026,3)
+        id_fevereiro=self.app.conn.execute(
+            "INSERT INTO lancamentos(mes_id,ocupante_id,numero_pessoas) VALUES(?,?,1)",
+            (fevereiro,ocupante_id),
+        ).lastrowid
+        id_marco=self.app.conn.execute(
+            "INSERT INTO lancamentos(mes_id,ocupante_id,numero_pessoas) VALUES(?,?,2)",
+            (marco,ocupante_id),
+        ).lastrowid
+
+        self.app.salvar_pessoas_ocupante(ocupante_id,2026,2,4)
+
+        self.assertEqual(self.row(self.ids[0])["numero_pessoas"],4)
+        self.assertEqual(self.row(id_fevereiro)["numero_pessoas"],4)
+        self.assertEqual(self.row(id_marco)["numero_pessoas"],4)
+        self.assertEqual(
+            self.app.regra_pessoas_ocupante(ocupante_id,2026,1)["numero_pessoas"],4
+        )
+        self.assertEqual(
+            self.app.regra_pessoas_ocupante(ocupante_id,2026,2)["numero_pessoas"],4
+        )
+        abril=self.carregar_mes_teste(2026,4)
+        self.assertEqual(abril["numero_pessoas"],4)
+
+    def test_pessoas_em_inquilinos_exigem_inteiro_nao_negativo(self):
+        ocupante_id=self.row(self.ids[0])["ocupante_id"]
+        for pessoas in (-1,1.5,True):
+            with self.subTest(pessoas=pessoas), self.assertRaises(ValueError):
+                self.app.salvar_pessoas_ocupante(ocupante_id,2026,2,pessoas)
+
+    def test_clique_na_coluna_pessoas_abre_edicao_no_inquilino(self):
+        ocupante_id=self.row(self.ids[0])["ocupante_id"]
+        self.app.oc_tree=Mock()
+        self.app.oc_tree.identify_region.return_value="cell"
+        self.app.oc_tree.identify_row.return_value=str(ocupante_id)
+        self.app.oc_tree.identify_column.return_value="#3"
+        self.app.root=SimpleNamespace(after_idle=lambda callback:callback())
+        self.app.iniciar_edicao_pessoas=Mock()
+
+        self.app.editar_celula_inquilino(SimpleNamespace(x=20,y=10))
+
+        self.app.iniciar_edicao_pessoas.assert_called_once_with(str(ocupante_id))
+
+    def test_edicao_inline_de_pessoas_salva_o_periodo_selecionado(self):
+        root=sistema.tk.Tk()
+        self.addCleanup(root.destroy)
+        self.app.root=root
+        self.app.tab_oc=sistema.ttk.Frame(root)
+        self.app.tab_oc.pack(fill="both",expand=True)
+        self.app.m_ano=SimpleNamespace(get=lambda:"2026")
+        self.app.m_mes=SimpleNamespace(get=lambda:"02")
+        self.app.atualizar_lancamentos=Mock()
+        self.app.montar_ocupantes()
+        self.app.atualizar_ocupantes()
+        root.update()
+        ocupante_id=self.row(self.ids[0])["ocupante_id"]
+
+        self.app.iniciar_edicao_pessoas(str(ocupante_id))
+        self.app.oc_pessoas_editor.delete(0,"end")
+        self.app.oc_pessoas_editor.insert(0,"4")
+        self.app.salvar_edicao_pessoas()
+
+        self.assertEqual(
+            self.app.regra_pessoas_ocupante(ocupante_id,2026,2)["numero_pessoas"],4
+        )
+        self.assertEqual(
+            self.app.oc_tree.set(str(ocupante_id),"numero_pessoas"),"4"
+        )
+        self.app.atualizar_lancamentos.assert_called_once()
 
     def test_leitura_atual_atualiza_mes_seguinte_e_preserva_leitura_digitada(self):
         ocupante_id=self.row(self.ids[0])["ocupante_id"]
@@ -216,7 +350,7 @@ class RateiosTest(unittest.TestCase):
             "INSERT INTO lancamentos(mes_id,ocupante_id,aluguel) VALUES(?,?,900)",(self.mid,revisa)
         )
         self.app.conn.commit()
-        with patch.object(sistema,"date",SimpleNamespace(today=lambda:date(2026,3,1))):
+        with patch.object(sistema,"date",SimpleNamespace(today=lambda:date(2026,3,11))):
             self.app.atualizar_aviso_aberto()
         texto=self.app.aviso_aberto.config.call_args.kwargs["text"]
         self.assertEqual(
@@ -237,14 +371,14 @@ class RateiosTest(unittest.TestCase):
                     (row["id"],saldo),
                 )
         self.app.conn.commit()
-        with patch.object(sistema,"date",SimpleNamespace(today=lambda:date(2026,3,1))):
+        with patch.object(sistema,"date",SimpleNamespace(today=lambda:date(2026,3,11))):
             self.app.atualizar_aviso_aberto()
         self.app.aviso_aberto.pack_forget.assert_called_once()
         pid=self.app.conn.execute(
             "SELECT id FROM pagamentos WHERE lancamento_id=?",(self.ids[0],)
         ).fetchone()[0]
         self.app.reverter_pagamento(pid,self.ids[0])
-        with patch.object(sistema,"date",SimpleNamespace(today=lambda:date(2026,3,1))):
+        with patch.object(sistema,"date",SimpleNamespace(today=lambda:date(2026,3,11))):
             self.app.atualizar_aviso_aberto()
         texto=self.app.aviso_aberto.config.call_args.kwargs["text"]
         self.assertIn("JANEIRO DE 2026 — TESTE A: "+sistema.moeda(100),texto)
@@ -270,6 +404,14 @@ class RateiosTest(unittest.TestCase):
         self.app.aviso_aberto.pack_forget.assert_called_once()
 
         with patch.object(sistema,"date",SimpleNamespace(today=lambda:date(2026,11,1))):
+            self.app.atualizar_aviso_aberto()
+        self.assertEqual(self.app.aviso_aberto.pack_forget.call_count,2)
+
+        with patch.object(sistema,"date",SimpleNamespace(today=lambda:date(2026,11,10))):
+            self.app.atualizar_aviso_aberto()
+        self.assertEqual(self.app.aviso_aberto.pack_forget.call_count,3)
+
+        with patch.object(sistema,"date",SimpleNamespace(today=lambda:date(2026,11,11))):
             self.app.atualizar_aviso_aberto()
         texto=self.app.aviso_aberto.config.call_args.kwargs["text"]
         self.assertEqual(
@@ -339,7 +481,7 @@ class RateiosTest(unittest.TestCase):
         self.assertEqual(herdado,4)
         self.assertEqual(preservado,7)
 
-    def test_alterar_pessoas_propaga_do_mes_selecionado_para_frente(self):
+    def test_alterar_pessoas_atualiza_todo_o_historico_do_inquilino(self):
         oid=self.row(self.ids[0])["ocupante_id"]
         outro_oid=self.row(self.ids[1])["ocupante_id"]
         fevereiro=self.app.garantir_mes(2026,2)
@@ -356,8 +498,8 @@ class RateiosTest(unittest.TestCase):
             "INSERT INTO lancamentos(mes_id,ocupante_id,numero_pessoas) VALUES(?,?,2)",
             (marco,oid),
         ).lastrowid
-        self.app.propagar_pessoas_futuras(oid,2026,2,4)
-        self.assertEqual(self.row(self.ids[0])["numero_pessoas"],3)
+        self.app.propagar_pessoas_ocupante(oid,4)
+        self.assertEqual(self.row(self.ids[0])["numero_pessoas"],4)
         self.assertEqual(self.row(id_fevereiro)["numero_pessoas"],4)
         self.assertEqual(self.row(id_marco)["numero_pessoas"],4)
         self.assertEqual(self.row(outro_fevereiro)["numero_pessoas"],8)
@@ -386,7 +528,7 @@ class RateiosTest(unittest.TestCase):
         self.app.conn.execute("UPDATE meses SET conta_agua=600 WHERE id=?",(fevereiro,))
         self.app.conn.execute("UPDATE meses SET conta_agua=300 WHERE id=?",(marco,))
 
-        self.app.propagar_pessoas_futuras(oid,2026,2,4)
+        self.app.propagar_pessoas_ocupante(oid,4)
 
         self.assertEqual(self.app.pessoas_terreno(fevereiro),6)
         self.assertEqual(self.app.pessoas_cobradas(fevereiro,"agua"),6)
@@ -398,6 +540,22 @@ class RateiosTest(unittest.TestCase):
         self.assertEqual(self.app.pessoas_terreno(marco),6)
         self.assertEqual(self.row(id_marco)["numero_pessoas"],4)
         self.assertAlmostEqual(self.app.cobrancas_lancamento(self.row(id_marco))["agua"],200)
+
+    def test_rateio_da_agua_divide_pelo_total_e_multiplica_pelas_pessoas(self):
+        id_a,id_b=self.ids
+        self.app.conn.execute(
+            "UPDATE meses SET conta_agua=600 WHERE id=?",(self.mid,)
+        )
+        self.app.salvar_pessoas_ocupante(
+            self.row(id_a)["ocupante_id"],2026,1,4
+        )
+        self.app.salvar_pessoas_ocupante(
+            self.row(id_b)["ocupante_id"],2026,1,2
+        )
+
+        self.assertEqual(self.app.pessoas_cobradas(self.mid,"agua"),6)
+        self.assertEqual(self.app.cobrancas_lancamento(self.row(id_a))["agua"],400)
+        self.assertEqual(self.app.cobrancas_lancamento(self.row(id_b))["agua"],200)
 
     def test_mes_sem_anterior_nao_copia_futuro(self):
         novo=self.carregar_mes_teste(2026,3)
@@ -577,6 +735,54 @@ class RateiosTest(unittest.TestCase):
         self.assertEqual(estilos()["TESTE A"],("em_aberto",))
         self.app.salvar_cobrancas("lancamentos",self.ids[1],{chave:False for chave,_ in sistema.COBRANCAS})
         self.assertEqual(estilos()["TESTE B"],("pago",))
+
+    def test_pagamento_no_valor_exibido_quita_saldo_com_fracao_de_centavo(self):
+        self.app.m_ano=SimpleNamespace(get=lambda:"2026")
+        self.app.m_mes=SimpleNamespace(get=lambda:"01")
+        self.app.lanc=Mock()
+        self.app.lanc.get_children.return_value=()
+        self.app.lbl_total=Mock()
+        self.app.atualizar_previa_agua=Mock()
+        self.app.atualizar_despesas=Mock()
+        gerson=self.app.conn.execute(
+            "SELECT id FROM ocupantes WHERE nome='GERSON'"
+        ).fetchone()["id"]
+        revisa=self.app.conn.execute(
+            "SELECT id FROM ocupantes WHERE nome='REVISA'"
+        ).fetchone()["id"]
+        self.app.conn.execute(
+            "UPDATE meses SET conta_agua=447.27 WHERE id=?",(self.mid,)
+        )
+        gerson_lancamento=self.app.conn.execute(
+            "INSERT INTO lancamentos(mes_id,ocupante_id,numero_pessoas,aluguel,cobrar_energia) "
+            "VALUES(?,?,5,1000,0)",(self.mid,gerson),
+        ).lastrowid
+        self.app.conn.execute(
+            "INSERT INTO lancamentos(mes_id,ocupante_id,numero_pessoas) VALUES(?,?,11)",
+            (self.mid,revisa),
+        )
+        self.app.conn.execute(
+            "INSERT INTO despesas_mes(mes_id,descricao,valor,rateio,ocupante_id) "
+            "VALUES(?,'Conserto Portao',149.25,'individual',?)",(self.mid,gerson),
+        )
+        self.app.conn.execute(
+            "INSERT INTO pagamentos(lancamento_id,data_pagamento,valor) "
+            "VALUES(?,'2026-01-15',1255.74)",(gerson_lancamento,),
+        )
+        gerson_row=self.row(gerson_lancamento)
+
+        self.assertAlmostEqual(
+            self.app.cobrancas_lancamento(gerson_row)["agua"],106.49285714285713
+        )
+        self.assertEqual(self.app.valores_lancamento(gerson_row)[2:],(1255.74,1255.74,0))
+
+        self.app.atualizar_lancamentos()
+
+        gerson_item=next(
+            call for call in self.app.lanc.insert.call_args_list
+            if call.kwargs["values"][1]=="GERSON"
+        )
+        self.assertEqual(gerson_item.kwargs["tags"],("pago",))
 
     def test_revisa_quitada_em_meses_antigos_e_futuros(self):
         oid=self.app.conn.execute("SELECT id FROM ocupantes WHERE nome='REVISA'").fetchone()[0]
@@ -806,8 +1012,13 @@ class RateiosTest(unittest.TestCase):
         lid=self.app.conn.execute(
             "INSERT INTO lancamentos(mes_id,ocupante_id) VALUES(?,?)",(self.mid,revisa),
         ).lastrowid
-        self.app.editar_despesa()
+        with patch.object(sistema.tk.Misc,"winfo_screenwidth",return_value=494), \
+             patch.object(sistema.tk.Misc,"winfo_screenheight",return_value=536):
+            self.app.editar_despesa()
         win=next(w for w in root.winfo_children() if isinstance(w,sistema.tk.Toplevel))
+        root.update()
+        self.assertLessEqual(win.winfo_width(),494)
+        self.assertLessEqual(win.winfo_height(),536)
         def descendentes(widget):
             for filho in widget.winfo_children():
                 yield filho
@@ -996,22 +1207,81 @@ class RateiosTest(unittest.TestCase):
         self.assertTrue(conteudo.startswith(b"%PDF-"))
         self.assertIn(b"%%EOF",conteudo[-1024:])
 
-    def test_relatorio_pdf_inclui_historico_revertido_e_baixa_automatica(self):
+    def test_conta_individual_pdf_omite_contas_gerais_e_outros_inquilinos(self):
+        self.app.gravar_despesa(self.mid,"Despesa geral",120)
+        ocupante_id=self.row(self.ids[0])["ocupante_id"]
+        self.app.gravar_despesa(self.mid,"Despesa individual",60,ocupante_id=ocupante_id)
+
+        with patch("reportlab.platypus.SimpleDocTemplate") as documento:
+            self.app.gerar_relatorio_pdf(
+                "conta.pdf",2026,1,ocupante_id,
+                opcoes=("resumo","detalhado","contas"),
+            )
+
+        story=documento.return_value.build.call_args.args[0]
+        def textos(elemento):
+            if hasattr(elemento,"getPlainText"):
+                return [elemento.getPlainText()]
+            if hasattr(elemento,"_cellvalues"):
+                return [
+                    texto for linha in elemento._cellvalues
+                    for celula in linha for texto in textos(celula)
+                ]
+            return []
+        conteudo="\n".join(texto for elemento in story for texto in textos(elemento))
+
+        self.assertIn("Conta individual — 01/2026",conteudo)
+        self.assertIn("Resumo da conta",conteudo)
+        self.assertIn("Total cobrado",conteudo)
+        self.assertIn("Recebido",conteudo)
+        self.assertIn("Saldo a pagar",conteudo)
+        self.assertIn("Situação: Em aberto",conteudo)
+        self.assertIn("TESTE A",conteudo)
+        self.assertNotIn("TESTE B",conteudo)
+        self.assertNotIn("Contas e rateios do mês",conteudo)
+        self.assertNotIn("Despesa geral",conteudo)
+
+    def test_relatorio_pdf_resume_recebido_sem_total_de_pagamentos_separado(self):
         oid=self.app.conn.execute("SELECT id FROM ocupantes WHERE nome='REVISA'").fetchone()[0]
-        self.app.conn.execute(
+        lid=self.app.conn.execute(
             "INSERT INTO lancamentos(mes_id,ocupante_id,aluguel) VALUES(?,?,100)",(self.mid,oid)
-        )
+        ).lastrowid
         pid=self.app.conn.execute(
-            "INSERT INTO pagamentos(lancamento_id,data_pagamento,valor) VALUES(?,'2026-01-15',10)",
+            "INSERT INTO pagamentos(lancamento_id,data_pagamento,valor) VALUES(?,'2026-01-15',30)",
+            (lid,),
+        ).lastrowid
+        pid_revertido=self.app.conn.execute(
+            "INSERT INTO pagamentos(lancamento_id,data_pagamento,valor) VALUES(?,'2026-01-14',10)",
             (self.ids[0],),
         ).lastrowid
-        self.app.reverter_pagamento(pid,self.ids[0])
-        with tempfile.TemporaryDirectory() as pasta:
-            caminho=Path(pasta)/"relatorio.pdf"
-            self.app.gerar_relatorio_pdf(caminho,2026,1,opcoes=("resumo","detalhado"))
-            conteudo=caminho.read_bytes()
-        self.assertTrue(conteudo.startswith(b"%PDF-"))
-        self.assertIn(b"%%EOF",conteudo[-1024:])
+        self.app.reverter_pagamento(pid_revertido,self.ids[0])
+
+        with patch("reportlab.platypus.SimpleDocTemplate") as documento:
+            self.app.gerar_relatorio_pdf(
+                "relatorio.pdf",2026,1,opcoes=("detalhado",)
+            )
+
+        story=documento.return_value.build.call_args.args[0]
+        def textos(elemento):
+            if hasattr(elemento,"getPlainText"):
+                return [elemento.getPlainText()]
+            if hasattr(elemento,"_cellvalues"):
+                return [
+                    texto for linha in elemento._cellvalues
+                    for celula in linha for texto in textos(celula)
+                ]
+            return []
+        conteudo="\n".join(texto for elemento in story for texto in textos(elemento))
+
+        self.assertIn("Recebido",conteudo)
+        self.assertIn("O valor recebido inclui pagamentos confirmados e, quando houver, a baixa automática.",conteudo)
+        self.assertIn("R$ 100,00",conteudo)
+        self.assertNotIn("Baixa automática",conteudo)
+        self.assertNotIn("Pagamentos registrados",conteudo)
+        self.assertIn("Total cobrado",conteudo)
+        self.assertIn("Saldo a pagar",conteudo)
+        self.assertIn("Histórico de pagamentos",conteudo)
+        self.assertIn("Revertido em",conteudo)
 
     def test_relatorio_pdf_informa_mes_sem_dados(self):
         with tempfile.TemporaryDirectory() as pasta:
@@ -1114,7 +1384,8 @@ class RateiosTest(unittest.TestCase):
               ajuste REAL DEFAULT 0,observacoes TEXT DEFAULT '',UNIQUE(mes_id,ocupante_id));
             INSERT INTO meses(id,ano,mes) VALUES(1,2026,1);
             INSERT INTO ocupantes(id,nome) VALUES(1,'LEGADO');
-            INSERT INTO lancamentos(id,mes_id,ocupante_id,portao) VALUES(1,1,1,35);
+            INSERT INTO lancamentos(id,mes_id,ocupante_id,leitura_inicial,leitura_final,portao)
+              VALUES(1,1,1,10,12,35);
             CREATE TABLE pagamentos(id INTEGER PRIMARY KEY,lancamento_id INTEGER NOT NULL,
               data_pagamento TEXT NOT NULL,valor REAL NOT NULL,forma TEXT DEFAULT '',observacoes TEXT DEFAULT '');
             INSERT INTO pagamentos(lancamento_id,data_pagamento,valor) VALUES(1,'2026-01-15',10);
@@ -1140,6 +1411,7 @@ class RateiosTest(unittest.TestCase):
         self.assertIn("idx_despesas_mes_rateio_ocupante", indices)
         self.assertEqual(app.contas_mes(1)["iluminacao_publica"],0)
         self.assertEqual(row["outras_despesas"], 35)
+        self.assertEqual(row["leitura_informada"], 1)
         self.assertEqual(app.cobrancas_lancamento(row)["outras"], 35)
         self.assertEqual(app.valores_lancamento(row)[-2:],(10,25))
         self.assertIsNone(conn.execute("SELECT revertido_em FROM pagamentos").fetchone()[0])

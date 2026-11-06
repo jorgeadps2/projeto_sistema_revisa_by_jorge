@@ -9,6 +9,7 @@ DEFAULTS = {
     "transferencia_habilitada": False,
     "pasta_transferencia": "",
     "pasta_backup_adicional": "",
+    "leituras_confirmadas": [],
 }
 
 
@@ -32,6 +33,7 @@ def write_json_atomic(path, data):
 def load(path=None):
     path = Path(path or paths.config_path())
     data = dict(DEFAULTS)
+    data["leituras_confirmadas"] = []
     try:
         stored = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
@@ -45,6 +47,11 @@ def load(path=None):
     data["pasta_transferencia"] = folder if isinstance(folder, str) else ""
     folder = stored.get("pasta_backup_adicional")
     data["pasta_backup_adicional"] = folder if isinstance(folder, str) else ""
+    confirmations = stored.get("leituras_confirmadas")
+    data["leituras_confirmadas"] = (
+        sorted({item for item in confirmations if isinstance(item, str)})
+        if isinstance(confirmations, list) else []
+    )
     return data
 
 
@@ -53,6 +60,10 @@ def save(data, path=None):
         "transferencia_habilitada": data.get("transferencia_habilitada") is True,
         "pasta_transferencia": str(data.get("pasta_transferencia") or ""),
         "pasta_backup_adicional": str(data.get("pasta_backup_adicional") or ""),
+        "leituras_confirmadas": sorted({
+            item for item in data.get("leituras_confirmadas", [])
+            if isinstance(item, str)
+        }) if isinstance(data.get("leituras_confirmadas", []), list) else [],
     }
     write_json_atomic(path or paths.config_path(), clean)
     return clean

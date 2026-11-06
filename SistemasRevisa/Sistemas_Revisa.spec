@@ -12,6 +12,7 @@ energy = root / "Controle_Energia_Agua_Barracao_Python" / "Controle_Energia_Agua
 
 datas = [
     (str(central_assets / "logo_central_revisa.png"), "assets"),
+    (str(central_assets / "robo_desenvolvedor.png"), "assets"),
     (str(central_assets / "revisa.ico"), "assets"),
     (str(payroll / "logo_revisa.png"), "."),
     (str(payroll / "assinatura_logo.png"), "."),

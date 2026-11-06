@@ -336,6 +336,13 @@ def data_iso(v):
         except ValueError: pass
     raise ValueError("Data inválida. Use DD/MM/AAAA.")
 
+
+def lancamento_vencido(ano,mes,hoje=None):
+    hoje=hoje or date.today()
+    ano_vencimento,mes_vencimento=(ano+1,1) if mes==12 else (ano,mes+1)
+    return (hoje.year,hoje.month,hoje.day)>(ano_vencimento,mes_vencimento,10)
+
+
 class App:
     def __init__(self, root, embutido=False):
         self.root = root
@@ -373,10 +380,12 @@ class App:
           UNIQUE(ano,mes));
         CREATE TABLE IF NOT EXISTS ocupantes(
           id INTEGER PRIMARY KEY, nome TEXT NOT NULL UNIQUE, ativo INTEGER NOT NULL DEFAULT 1,
-          observacoes TEXT NOT NULL DEFAULT '');
+          observacoes TEXT NOT NULL DEFAULT '',
+          avisar_leitura INTEGER NOT NULL DEFAULT 1);
         CREATE TABLE IF NOT EXISTS lancamentos(
           id INTEGER PRIMARY KEY, mes_id INTEGER NOT NULL, ocupante_id INTEGER NOT NULL,
           leitura_inicial REAL DEFAULT 0, leitura_final REAL DEFAULT 0, tarifa_kwh REAL DEFAULT 0,
+          leitura_informada INTEGER NOT NULL DEFAULT 0,
           numero_pessoas INTEGER NOT NULL DEFAULT 0, agua_partes REAL DEFAULT 0, aluguel REAL DEFAULT 0, outras_despesas REAL DEFAULT 0,
           ajuste REAL DEFAULT 0, observacoes TEXT DEFAULT '',
           FOREIGN KEY(mes_id) REFERENCES meses(id), FOREIGN KEY(ocupante_id) REFERENCES ocupantes(id),
@@ -398,9 +407,14 @@ class App:
         }
         colunas_pagamentos={r["name"] for r in self.conn.execute("PRAGMA table_info(pagamentos)")}
         colunas_ocupantes={r["name"] for r in self.conn.execute("PRAGMA table_info(ocupantes)")}
+        migrar_aviso_leitura="avisar_leitura" not in colunas_ocupantes
         if "observacoes" not in colunas_ocupantes:
             self.conn.execute(
                 "ALTER TABLE ocupantes ADD COLUMN observacoes TEXT NOT NULL DEFAULT ''"
+            )
+        if migrar_aviso_leitura:
+            self.conn.execute(
+                "ALTER TABLE ocupantes ADD COLUMN avisar_leitura INTEGER NOT NULL DEFAULT 0"
             )
         if "revertido_em" not in colunas_pagamentos:
             self.conn.execute("ALTER TABLE pagamentos ADD COLUMN revertido_em TEXT DEFAULT NULL")
@@ -412,6 +426,14 @@ class App:
         if "numero_pessoas" not in colunas_lancamentos:
             self.conn.execute(
                 "ALTER TABLE lancamentos ADD COLUMN numero_pessoas INTEGER NOT NULL DEFAULT 0"
+            )
+        if "leitura_informada" not in colunas_lancamentos:
+            self.conn.execute(
+                "ALTER TABLE lancamentos ADD COLUMN leitura_informada INTEGER NOT NULL DEFAULT 0"
+            )
+            self.conn.execute(
+                "UPDATE lancamentos SET leitura_informada=1 "
+                "WHERE COALESCE(leitura_final,0) != COALESCE(leitura_inicial,0)"
             )
         if "outras_despesas" not in colunas_lancamentos:
             self.conn.execute(
@@ -438,10 +460,37 @@ class App:
                 campo=f"cobrar_{chave}"
                 if campo not in colunas:
                     self.conn.execute(f"ALTER TABLE {tabela} ADD COLUMN {campo} INTEGER NOT NULL DEFAULT 1")
+        if migrar_aviso_leitura:
+            hoje=date.today()
+            self.conn.execute(
+                """
+                UPDATE ocupantes AS o
+                SET avisar_leitura=COALESCE((
+                    SELECT CASE
+                        WHEN COALESCE(l.aluguel,0)>0 AND COALESCE(l.cobrar_energia,1)=1
+                        THEN 1 ELSE 0
+                    END
+                    FROM lancamentos l
+                    JOIN meses m ON m.id=l.mes_id
+                    WHERE l.ocupante_id=o.id
+                      AND m.ano*100+m.mes<=?
+                    ORDER BY CASE WHEN m.ano=? AND m.mes=? THEN 0 ELSE 1 END,
+                             m.ano DESC,m.mes DESC
+                    LIMIT 1
+                ),0)
+                """,
+                (hoje.year*100+hoje.month,hoje.year,hoje.month),
+            )
         campos_regras=",".join(f"cobrar_{chave} INTEGER NOT NULL DEFAULT 1" for chave,_ in COBRANCAS)
         self.conn.execute(
             f"CREATE TABLE IF NOT EXISTS padroes_cobranca (ocupante_id INTEGER NOT NULL,"
             f"periodo INTEGER NOT NULL,{campos_regras},PRIMARY KEY(ocupante_id,periodo))"
+        )
+        self.conn.execute(
+            "CREATE TABLE IF NOT EXISTS padroes_pessoas ("
+            "ocupante_id INTEGER NOT NULL,periodo INTEGER NOT NULL,"
+            "numero_pessoas INTEGER NOT NULL CHECK(numero_pessoas>=0),"
+            "PRIMARY KEY(ocupante_id,periodo))"
         )
         self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_pagamentos_lancamento_revertido "
@@ -715,7 +764,7 @@ class App:
         tk.Entry(agua_box,textvariable=self.agua_total_var,width=24,bg="#ffffff",fg="#18212b",insertbackground="#18212b",font=("Segoe UI",12),relief="solid",bd=1).grid(row=1,column=0,sticky="ew",pady=(6,0),ipady=4)
         tk.Entry(agua_box,textvariable=self.agua_pessoas_var,state="readonly",readonlybackground="#ffffff",width=24,bg="#ffffff",fg="#18212b",insertbackground="#18212b",font=("Segoe UI",12),relief="solid",bd=1).grid(row=3,column=0,sticky="ew",pady=(6,0),ipady=4)
         tk.Label(agua_box,textvariable=self.agua_por_pessoa,bg=fundo_rateio,fg="#17645e",font=("Segoe UI",11,"bold"),wraplength=310,justify="left").grid(row=5,column=0,sticky="w",pady=(6,0))
-        tk.Label(agua_box,text="Água: valor total ÷ pessoas não isentas × pessoas do inquilino.\n\nIsentos não participam da divisão da água.\n\nDê duplo clique no inquilino para informar pessoas e cobranças.",bg=fundo_rateio,fg="#25313c",wraplength=310,justify="left").grid(row=6,column=0,sticky="w",pady=(18,0))
+        tk.Label(agua_box,text="Água: valor total ÷ pessoas não isentas × pessoas do inquilino.\n\nIsentos não participam da divisão da água.\n\nInforme a quantidade na coluna Pessoas da aba Inquilinos.",bg=fundo_rateio,fg="#25313c",wraplength=310,justify="left").grid(row=6,column=0,sticky="w",pady=(18,0))
         ttk.Button(agua_box,text="Salvar rateio da água",command=self.salvar_rateio_agua).grid(row=7,column=0,sticky="ew",pady=(18,0))
         self.agua_total_var.trace_add("write",lambda *_:self.atualizar_previa_agua())
         self.lbl_mes_planilha=ttk.Label(
@@ -773,6 +822,8 @@ class App:
     def montar_ocupantes(self):
         self.oc_obs_editor=None
         self.oc_obs_editor_id=None
+        self.oc_pessoas_editor=None
+        self.oc_pessoas_editor_id=None
         f=ttk.Frame(self.tab_oc);f.pack(fill="x",pady=8)
         ttk.Label(f,text="Nome do inquilino:").pack(side="left")
         self.oc_nome=tk.StringVar();ttk.Entry(f,textvariable=self.oc_nome,width=36).pack(side="left",padx=8)
@@ -782,24 +833,31 @@ class App:
         ttk.Label(
             self.tab_oc,
             text="Clique em uma cobrança para alternar Sim/Não. Clique na observação para editar. "
-                 "As mudanças de cobrança valem do mês selecionado em diante.",
+                 "As mudanças de cobrança valem do mês selecionado em diante. "
+                 "Clique em Pessoas para alterar a quantidade em todos os meses, inclusive no histórico. "
+                 "Clique em Aviso leitura para escolher quem deve receber o lembrete.",
             wraplength=1100,
         ).pack(anchor="w",pady=(0,4))
         tabela=tk.Frame(self.tab_oc,bg=FUNDO)
         tabela.pack(fill="both",expand=True,pady=10)
-        colunas=("id","nome","observacoes")+tuple(f"cobrar_{chave}" for chave,_ in COBRANCAS)+("status",)
+        colunas=("id","nome","observacoes","numero_pessoas")+tuple(
+            f"cobrar_{chave}" for chave,_ in COBRANCAS
+        )+("status","avisar_leitura")
         self.oc_tree=ttk.Treeview(
             tabela,columns=colunas,displaycolumns=colunas[1:],show="headings",height=16
         )
         cabecalhos={
             "id":"ID","nome":"Inquilino","observacoes":"Observações",
+            "numero_pessoas":"Pessoas",
             "cobrar_energia":"Energia","cobrar_agua":"Água",
             "cobrar_aluguel":"Aluguel",
             "cobrar_outras":"Outras","cobrar_ajuste":"Ajuste","status":"Situação",
+            "avisar_leitura":"Aviso leitura",
         }
-        larguras={"id":0,"nome":210,"observacoes":250,"cobrar_energia":85,
+        larguras={"id":0,"nome":210,"observacoes":250,"numero_pessoas":75,"cobrar_energia":85,
                   "cobrar_agua":75,"cobrar_aluguel":85,
-                  "cobrar_outras":85,"cobrar_ajuste":75,"status":90}
+                  "cobrar_outras":85,"cobrar_ajuste":75,"status":90,
+                  "avisar_leitura":110}
         for c in colunas:
             self.oc_tree.heading(c,text=cabecalhos[c])
             self.oc_tree.column(
@@ -855,7 +913,11 @@ class App:
             parametros=",".join("?" for _ in valores)
             aluguel=anterior["aluguel"] if anterior else 0
             leitura=anterior["leitura_final"] if anterior else 0
-            pessoas=anterior["numero_pessoas"] if anterior else 0
+            regra_pessoas=self.regra_pessoas_ocupante(ocupante["id"],ano,mes)
+            pessoas=(
+                regra_pessoas["numero_pessoas"] if regra_pessoas is not None
+                else anterior["numero_pessoas"] if anterior else 0
+            )
             resultado=self.conn.execute(
                 f"INSERT OR IGNORE INTO lancamentos(mes_id,ocupante_id,aluguel,leitura_inicial,leitura_final,numero_pessoas,{campos}) "
                 f"VALUES(?,?,?,?,?,?,{parametros})",
@@ -868,7 +930,12 @@ class App:
                 tem_pagamento=self.conn.execute(
                     "SELECT 1 FROM pagamentos WHERE lancamento_id=? LIMIT 1",(atual["id"],)
                 ).fetchone()
-                if atual["numero_pessoas"]==0 and pessoas>0 and not tem_pagamento:
+                if regra_pessoas is not None and atual["numero_pessoas"]!=pessoas:
+                    self.conn.execute(
+                        "UPDATE lancamentos SET numero_pessoas=? WHERE id=?",
+                        (pessoas,atual["id"]),
+                    )
+                elif regra_pessoas is None and atual["numero_pessoas"]==0 and pessoas>0 and not tem_pagamento:
                     self.conn.execute(
                         "UPDATE lancamentos SET numero_pessoas=? WHERE id=?",
                         (pessoas,atual["id"]),
@@ -1074,20 +1141,61 @@ class App:
         win=tk.Toplevel(self.root);win.title("Outras despesas do mês");win.transient(self.root);win.grab_set()
         vincular_restauracao_modal(self.root,win)
         self.configurar_estilo_formulario(win)
+        largura_tela=win.winfo_screenwidth()
+        altura_tela=win.winfo_screenheight()
+        largura_dialogo=min(800,max(280,largura_tela-24))
+        altura_dialogo=min(760,max(240,altura_tela-48))
+        colunas_lado_a_lado=largura_dialogo>=760
+        win.geometry(f"{largura_dialogo}x{altura_dialogo}")
+        win.minsize(min(360,largura_dialogo),min(320,altura_dialogo))
         win.columnconfigure(0,weight=1)
-        win.columnconfigure(1,weight=1)
-        dados=ttk.Frame(win,style="Form.TFrame",padding=12)
-        dados.grid(row=0,column=0,columnspan=2,sticky="ew")
+        win.rowconfigure(0,weight=1)
+        conteudo=ttk.Frame(win,style="Form.TFrame")
+        conteudo.grid(row=0,column=0,sticky="nsew")
+        conteudo.columnconfigure(0,weight=1)
+        conteudo.rowconfigure(0,weight=1)
+        canvas=tk.Canvas(
+            conteudo,bg=FUNDO,borderwidth=0,highlightthickness=0,
+            width=largura_dialogo-24,height=max(180,altura_dialogo-120),
+        )
+        rolagem=ttk.Scrollbar(conteudo,orient="vertical",command=canvas.yview)
+        canvas.configure(yscrollcommand=rolagem.set)
+        canvas.grid(row=0,column=0,sticky="nsew")
+        rolagem.grid(row=0,column=1,sticky="ns")
+        formulario=ttk.Frame(canvas,style="Form.TFrame")
+        formulario.columnconfigure(0,weight=1)
+        if colunas_lado_a_lado:
+            formulario.columnconfigure(1,weight=1)
+        formulario_id=canvas.create_window(0,0,anchor="nw",window=formulario)
+        formulario.bind(
+            "<Configure>",
+            lambda _evento:canvas.configure(scrollregion=canvas.bbox("all")),
+        )
+        canvas.bind(
+            "<Configure>",
+            lambda evento:canvas.itemconfigure(formulario_id,width=evento.width),
+        )
+        dados=ttk.Frame(formulario,style="Form.TFrame",padding=12)
+        dados.grid(row=0,column=0,columnspan=(2 if colunas_lado_a_lado else 1),sticky="ew")
         dados.columnconfigure(1,weight=1)
-        quem=ttk.Frame(win,style="Form.TFrame",padding=12)
+        quem=ttk.Frame(formulario,style="Form.TFrame",padding=12)
         quem.grid(row=1,column=0,sticky="nsew")
-        quando=ttk.Frame(win,style="Form.TFrame",padding=12)
-        quando.grid(row=1,column=1,sticky="nsew")
+        quando=ttk.Frame(formulario,style="Form.TFrame",padding=12)
+        quando.grid(
+            row=1 if colunas_lado_a_lado else 2,
+            column=1 if colunas_lado_a_lado else 0,
+            sticky="nsew",
+        )
         rodape=ttk.Frame(win,style="Form.TFrame",padding=12)
-        rodape.grid(row=2,column=0,columnspan=2,sticky="ew")
+        rodape.grid(row=1,column=0,sticky="ew")
         rodape.columnconfigure(0,weight=1)
+        win.rowconfigure(1,weight=0)
         descricao=tk.StringVar(value=row["descricao"] if row else "")
         valor=tk.StringVar(value=str(row["valor"]) if row else "")
+        largura_entrada=max(12,min(48,(largura_dialogo-190)//8))
+        wraplength_participantes=min(
+            310,max(180,largura_dialogo-(480 if colunas_lado_a_lado else 56)),
+        )
         ocupantes=self.conn.execute(
             "SELECT l.ocupante_id,o.nome FROM lancamentos l JOIN ocupantes o "
             "ON o.id=l.ocupante_id WHERE l.mes_id=? ORDER BY o.nome",(mid,)
@@ -1103,7 +1211,7 @@ class App:
         periodos={(int(self.m_ano.get()),int(self.m_mes.get()))}
         ttk.Label(dados,text="1. Qual é a despesa?",style="Form.TLabel").grid(row=0,column=0,columnspan=2,sticky="w",pady=(0,8))
         ttk.Label(dados,text="Descrição",style="Form.TLabel").grid(row=1,column=0,padx=(0,12),pady=4,sticky="w")
-        descricao_entry=ttk.Entry(dados,textvariable=descricao,width=48,style="Form.TEntry")
+        descricao_entry=ttk.Entry(dados,textvariable=descricao,width=largura_entrada,style="Form.TEntry")
         descricao_entry.grid(row=1,column=1,pady=4,sticky="ew")
         ttk.Label(dados,text="Valor informado (R$)",style="Form.TLabel").grid(row=2,column=0,padx=(0,12),pady=4,sticky="w")
         ttk.Entry(dados,textvariable=valor,style="Form.TEntry").grid(row=2,column=1,pady=4,sticky="w")
@@ -1146,7 +1254,7 @@ class App:
         ).pack(anchor="w")
         ttk.Label(
             participantes,text="Desmarcado: cada selecionado paga o valor integral do mês.",
-            style="Form.TLabel",wraplength=310,
+            style="Form.TLabel",wraplength=wraplength_participantes,
         ).pack(anchor="w")
         def alternar_rateio(_evento=None):
             rateio_frame.pack_forget()
@@ -1224,8 +1332,8 @@ class App:
             modo_frame.pack_forget()
         ttk.Label(
             rodape,text="A despesa será somada às cobranças existentes. As isenções são mantidas.",
-            style="Form.TLabel",wraplength=650,
-        ).grid(row=0,column=0,columnspan=2,sticky="w",pady=(0,8))
+            style="Form.TLabel",wraplength=max(180,largura_dialogo-52),
+        ).grid(row=0,column=0,columnspan=2,sticky="ew",pady=(0,8))
         def salvar():
             try:
                 quantia=numero(valor.get(),"Valor total da despesa")
@@ -1287,6 +1395,20 @@ class App:
             win.destroy();self.atualizar_lancamentos()
         ttk.Button(rodape,text="Cancelar",command=win.destroy).grid(row=1,column=0,sticky="e",padx=8)
         ttk.Button(rodape,text="Salvar despesa",command=salvar).grid(row=1,column=1,sticky="e")
+        win.update_idletasks()
+        x=max(
+            0,min(
+                largura_tela-largura_dialogo,
+                self.root.winfo_rootx()+(self.root.winfo_width()-largura_dialogo)//2,
+            ),
+        )
+        y=max(
+            0,min(
+                altura_tela-altura_dialogo,
+                self.root.winfo_rooty()+(self.root.winfo_height()-altura_dialogo)//2,
+            ),
+        )
+        win.geometry(f"{largura_dialogo}x{altura_dialogo}+{x}+{y}")
         descricao_entry.focus_set()
 
     def excluir_despesa(self):
@@ -1323,6 +1445,25 @@ class App:
             (ocupante["id"],ano*100+mes),
         ).fetchone() or ocupante
 
+    def regra_pessoas_ocupante(self,ocupante_id,ano,mes):
+        return self.conn.execute(
+            "SELECT numero_pessoas FROM padroes_pessoas WHERE ocupante_id=? AND periodo<=? "
+            "ORDER BY periodo DESC LIMIT 1",
+            (ocupante_id,ano*100+mes),
+        ).fetchone()
+
+    def pessoas_ocupante_no_periodo(self,ocupante_id,ano,mes):
+        regra=self.regra_pessoas_ocupante(ocupante_id,ano,mes)
+        if regra is not None:
+            return regra["numero_pessoas"]
+        row=self.conn.execute(
+            "SELECT l.numero_pessoas FROM lancamentos l JOIN meses m ON m.id=l.mes_id "
+            "WHERE l.ocupante_id=? AND m.ano*100+m.mes<=? "
+            "ORDER BY m.ano DESC,m.mes DESC LIMIT 1",
+            (ocupante_id,ano*100+mes),
+        ).fetchone()
+        return row["numero_pessoas"] if row is not None else 0
+
     def editar_celula_inquilino(self,event):
         regiao=self.oc_tree.identify_region(event.x,event.y)
         if regiao!="cell":
@@ -1336,8 +1477,29 @@ class App:
         if coluna=="#2":
             self.root.after_idle(lambda:self.iniciar_edicao_observacao(ident))
             return "break"
+        if coluna=="#3":
+            self.root.after_idle(lambda:self.iniciar_edicao_pessoas(ident))
+            return "break"
+        if coluna=="#10":
+            try:
+                row=self.conn.execute(
+                    "SELECT avisar_leitura FROM ocupantes WHERE id=?",(ident,)
+                ).fetchone()
+                if row is None:
+                    raise ValueError("Inquilino não encontrado.")
+                self.conn.execute(
+                    "UPDATE ocupantes SET avisar_leitura=? WHERE id=?",
+                    (0 if row["avisar_leitura"] else 1,ident),
+                )
+                self.conn.commit()
+            except (ValueError,sqlite3.Error) as erro:
+                messagebox.showerror("Não foi possível atualizar o aviso de leitura",str(erro),parent=self.root)
+                self.atualizar_ocupantes()
+                return "break"
+            self.atualizar_ocupantes()
+            return "break"
         colunas_cobranca={
-            f"#{indice+3}":chave for indice,(chave,_) in enumerate(COBRANCAS)
+            f"#{indice+4}":chave for indice,(chave,_) in enumerate(COBRANCAS)
         }
         chave=colunas_cobranca.get(coluna)
         if chave is None:
@@ -1413,6 +1575,81 @@ class App:
             )
             if resultado.rowcount!=1:
                 raise ValueError("O inquilino selecionado não foi encontrado.")
+
+    def iniciar_edicao_pessoas(self,ident):
+        if self.oc_pessoas_editor is not None:
+            self.salvar_edicao_pessoas()
+        caixa=self.oc_tree.bbox(ident,"numero_pessoas")
+        if not caixa:
+            return
+        x,y,largura,altura=caixa
+        editor=ttk.Entry(self.oc_tree)
+        editor.insert(0,self.oc_tree.set(ident,"numero_pessoas"))
+        editor.place(x=x,y=y,width=largura,height=altura)
+        self.oc_pessoas_editor=editor
+        self.oc_pessoas_editor_id=ident
+        editor.bind("<Return>",self.salvar_edicao_pessoas)
+        editor.bind("<FocusOut>",self.salvar_edicao_pessoas)
+        editor.bind("<Escape>",self.cancelar_edicao_pessoas)
+        editor.focus_set()
+        editor.selection_range(0,"end")
+
+    def cancelar_edicao_pessoas(self,event=None):
+        editor=self.oc_pessoas_editor
+        self.oc_pessoas_editor=None
+        self.oc_pessoas_editor_id=None
+        if editor is not None:
+            editor.destroy()
+        return "break"
+
+    def salvar_edicao_pessoas(self,event=None):
+        editor=self.oc_pessoas_editor
+        ident=self.oc_pessoas_editor_id
+        if editor is None or ident is None:
+            return "break"
+        valor=editor.get().strip()
+        self.oc_pessoas_editor=None
+        self.oc_pessoas_editor_id=None
+        editor.destroy()
+        try:
+            pessoas=int(valor)
+        except ValueError:
+            messagebox.showerror(
+                "Não foi possível salvar as pessoas",
+                "Informe um número inteiro de pessoas igual ou maior que zero.",
+                parent=self.root,
+            )
+            self.atualizar_ocupantes()
+            return "break"
+        try:
+            ano=int(self.m_ano.get())
+            mes=int(self.m_mes.get())
+            self.salvar_pessoas_ocupante(int(ident),ano,mes,pessoas)
+        except (ValueError,sqlite3.Error) as erro:
+            messagebox.showerror("Não foi possível salvar as pessoas",str(erro),parent=self.root)
+            self.atualizar_ocupantes()
+            return "break"
+        self.atualizar_ocupantes()
+        self.atualizar_lancamentos()
+        return "break"
+
+    def salvar_pessoas_ocupante(self,ident,ano,mes,pessoas):
+        if ano<ANO_INICIAL or not 1<=mes<=12:
+            raise ValueError("Período inválido para a quantidade de pessoas.")
+        if isinstance(pessoas,bool) or not isinstance(pessoas,int) or pessoas<0:
+            raise ValueError("Informe um número inteiro de pessoas igual ou maior que zero.")
+        if self.conn.execute("SELECT 1 FROM ocupantes WHERE id=?",(ident,)).fetchone() is None:
+            raise ValueError("Inquilino não encontrado.")
+        with self.conn:
+            self.conn.execute(
+                "DELETE FROM padroes_pessoas WHERE ocupante_id=?",(ident,)
+            )
+            self.conn.execute(
+                "INSERT OR REPLACE INTO padroes_pessoas(ocupante_id,periodo,numero_pessoas) "
+                "VALUES(?,?,?)",
+                (ident,ANO_INICIAL*100+1,pessoas),
+            )
+            self.propagar_pessoas_ocupante(ident,pessoas)
 
     def aplicar_padrao_cobrancas(self,ident,flags,ano,mes):
         if ano<ANO_INICIAL or not 1<=mes<=12:
@@ -1624,6 +1861,7 @@ class App:
                   style="Form.TLabel").pack(anchor="w",pady=8)
 
         vars={}
+        leitura_editada={"valor":bool(row["leitura_informada"])}
         def criar_campo(parent,label,key,coluna):
             celula=ttk.Frame(parent,style="Form.TFrame")
             celula.grid(row=0,column=coluna,padx=(0 if coluna==0 else 10,0),sticky="ew")
@@ -1638,6 +1876,9 @@ class App:
             ("Leitura atual","leitura_final"),
         )):
             criar_campo(energia,label,key,coluna)
+        vars["leitura_final"].trace_add(
+            "write",lambda *_:leitura_editada.update(valor=True)
+        )
         conta=self.contas_mes(row["mes_id"])
         if conta["usar_rateio_energia"]:
             vars["tarifa_kwh"]=tk.StringVar(value=str(row["tarifa_kwh"] or 0))
@@ -1651,13 +1892,10 @@ class App:
         ttk.Label(energia,text=info,style="Form.TLabel",wraplength=500).grid(
             row=1,column=0,columnspan=3,sticky="w",pady=(8,0)
         )
-
-        agua=ttk.LabelFrame(conteudo,text="  Água  ",padding=12,style="Form.TLabelframe")
-        agua.pack(fill="x",pady=(0,10))
-        criar_campo(agua,"Pessoas deste inquilino (Y)","numero_pessoas",0)
-        ttk.Label(agua,text="Água ÷ pessoas dos não isentos × pessoas deste inquilino.",style="Form.TLabel").grid(
-            row=1,column=0,columnspan=2,sticky="w",pady=(8,0)
-        )
+        ttk.Label(
+            conteudo,text="A quantidade de pessoas e o rateio da água são gerenciados na aba Inquilinos.",
+            style="Form.TLabel",wraplength=500,
+        ).pack(anchor="w",pady=(0,10))
 
         adicionais=ttk.LabelFrame(extras,text="  Outros valores  ",padding=12,style="Form.TLabelframe")
         adicionais.pack(fill="x",pady=(0,10))
@@ -1679,16 +1917,15 @@ class App:
             try:
                 d={k:numero(v.get(),k) for k,v in vars.items()}
                 if d["leitura_final"]<d["leitura_inicial"]:raise ValueError("A leitura final não pode ser menor que a inicial.")
-                if d["numero_pessoas"]<0 or not d["numero_pessoas"].is_integer():raise ValueError("Informe um número inteiro de pessoas igual ou maior que zero.")
                 if any(d[k]<0 for k in ("tarifa_kwh","aluguel")):raise ValueError("Tarifa e aluguel não podem ser negativos.")
             except ValueError as e:messagebox.showerror("Verifique os dados",str(e),parent=win);return
             escolhas={chave:v.get() for chave,v in flags.items()}
             with self.conn:
-                self.conn.execute("""UPDATE lancamentos SET leitura_inicial=?,leitura_final=?,tarifa_kwh=?,numero_pessoas=?,aluguel=?,ajuste=?,observacoes=? WHERE id=?""",
-                    (d["leitura_inicial"],d["leitura_final"],d["tarifa_kwh"],int(d["numero_pessoas"]),d["aluguel"],d["ajuste"],obs.get("1.0","end").strip(),row["id"]))
-                self.propagar_pessoas_futuras(
-                    row["ocupante_id"],row["ano"],row["mes"],int(d["numero_pessoas"])
-                )
+                self.conn.execute("""UPDATE lancamentos SET leitura_inicial=?,leitura_final=?,leitura_informada=?,tarifa_kwh=?,aluguel=?,ajuste=?,observacoes=? WHERE id=?""",
+                    (d["leitura_inicial"],d["leitura_final"],
+                     int(leitura_editada["valor"] or d["leitura_final"]!=d["leitura_inicial"]),
+                     d["tarifa_kwh"],d["aluguel"],d["ajuste"],
+                     obs.get("1.0","end").strip(),row["id"]))
                 self.propagar_leitura_seguinte(
                     row["ocupante_id"],row["ano"],row["mes"],d["leitura_final"]
                 )
@@ -1701,11 +1938,10 @@ class App:
         ttk.Button(botoes,text="Cancelar",command=win.destroy).pack(side="right")
         ttk.Button(botoes,text="Salvar lançamento",command=salvar).pack(side="right",padx=(0,8))
 
-    def propagar_pessoas_futuras(self,ocupante_id,ano,mes,pessoas):
+    def propagar_pessoas_ocupante(self,ocupante_id,pessoas):
         self.conn.execute(
-            "UPDATE lancamentos SET numero_pessoas=? WHERE ocupante_id=? AND mes_id IN "
-            "(SELECT id FROM meses WHERE ano*100+mes>=?)",
-            (pessoas,ocupante_id,ano*100+mes),
+            "UPDATE lancamentos SET numero_pessoas=? WHERE ocupante_id=?",
+            (pessoas,ocupante_id),
         )
 
     def propagar_leitura_seguinte(self,ocupante_id,ano,mes,leitura):
@@ -1797,10 +2033,14 @@ class App:
 
     def valores_lancamento(self,row):
         valores=self.cobrancas_lancamento(row)
-        total=sum(valores.values())
-        pago=self.conn.execute("SELECT COALESCE(SUM(valor),0) s FROM pagamentos WHERE lancamento_id=? AND revertido_em IS NULL",(row["id"],)).fetchone()["s"]
-        pago+=self.baixa_automatica(row,total,pago)
-        return valores["energia"],valores["agua"],total,pago,max(0,total-pago)
+        total=round(sum(valores.values()),2)
+        pago=round(self.conn.execute(
+            "SELECT COALESCE(SUM(valor),0) s FROM pagamentos "
+            "WHERE lancamento_id=? AND revertido_em IS NULL",(row["id"],)
+        ).fetchone()["s"],2)
+        pago=round(pago+self.baixa_automatica(row,total,pago),2)
+        saldo=round(max(0,total-pago),2)
+        return valores["energia"],valores["agua"],total,pago,saldo
 
     def baixa_automatica(self,row,total,pago):
         ocupante=self.conn.execute("SELECT nome FROM ocupantes WHERE id=?",(row["ocupante_id"],)).fetchone()
@@ -1811,13 +2051,14 @@ class App:
             return
         totais={}
         hoje=date.today()
-        periodo_atual=(hoje.year,hoje.month)
         for row in self.conn.execute(
             "SELECT l.*,m.ano,m.mes,o.nome FROM lancamentos l "
             "JOIN meses m ON m.id=l.mes_id JOIN ocupantes o ON o.id=l.ocupante_id "
             "WHERE m.ano<? OR (m.ano=? AND m.mes<?)",
-            (periodo_atual[0],periodo_atual[0],periodo_atual[1]),
+            (hoje.year,hoje.year,hoje.month),
         ).fetchall():
+            if not lancamento_vencido(row["ano"],row["mes"],hoje):
+                continue
             periodo=(row["ano"],row["mes"])
             saldo=round(self.valores_lancamento(row)[-1],2)
             if saldo>0:
@@ -2015,8 +2256,10 @@ class App:
             regra=self.regra_cobranca_ocupante(r,ano,mes)
             valores=(
                 r["id"],r["nome"],r["observacoes"] or "",
+                self.pessoas_ocupante_no_periodo(r["id"],ano,mes),
                 *("Sim" if regra[f"cobrar_{chave}"] else "Não" for chave,_ in COBRANCAS),
                 "Ativo" if r["ativo"] else "Inativo",
+                "Sim" if r["avisar_leitura"] else "Não",
             )
             self.oc_tree.insert("","end",iid=str(r["id"]),values=valores)
 
@@ -2047,27 +2290,52 @@ class App:
         )]
         ocupante=tk.StringVar(value=nomes[0])
         ttk.Label(moldura,text="Ocupante").grid(row=3,column=0,sticky="w",pady=(10,0))
-        ttk.Combobox(moldura,textvariable=ocupante,values=nomes,width=28,
-                     state="readonly").grid(row=3,column=1,sticky="w",pady=(10,0))
+        ocupante_combo=ttk.Combobox(
+            moldura,textvariable=ocupante,values=nomes,width=28,state="readonly",
+        )
+        ocupante_combo.grid(row=3,column=1,sticky="w",pady=(10,0))
+        ttk.Label(
+            moldura,
+            text="Ao selecionar um inquilino, o PDF mostra somente a conta, os pagamentos e o saldo dele.",
+            wraplength=360,
+        ).grid(row=4,column=0,columnspan=2,sticky="w",pady=(6,0))
 
-        ttk.Label(moldura,text="Incluir no PDF").grid(row=4,column=0,columnspan=2,
+        ttk.Label(moldura,text="Incluir no PDF").grid(row=5,column=0,columnspan=2,
                                                      sticky="w",pady=(14,4))
         opcoes={
             "resumo":tk.BooleanVar(value=True),
             "detalhado":tk.BooleanVar(value=True),
             "contas":tk.BooleanVar(value=True),
         }
+        caixas_opcoes={}
         for linha,(chave,texto) in enumerate((
             ("resumo","Resumo dos totais"),
             ("detalhado","Detalhamento por ocupante, pagamentos e saldo"),
             ("contas","Contas do mês e despesas/rateios"),
-        ),start=5):
-            ttk.Checkbutton(moldura,text=texto,variable=opcoes[chave]).grid(
-                row=linha,column=0,columnspan=2,sticky="w"
+        ),start=6):
+            caixas_opcoes[chave]=ttk.Checkbutton(
+                moldura,text=texto,variable=opcoes[chave],
             )
+            caixas_opcoes[chave].grid(row=linha,column=0,columnspan=2,sticky="w")
+
+        def alternar_tipo_relatorio(_evento=None):
+            individual=ocupante.get()!="Todos os ocupantes"
+            for chave,caixa in caixas_opcoes.items():
+                if individual:
+                    opcoes[chave].set(chave=="detalhado")
+                    caixa.configure(state="disabled")
+                else:
+                    opcoes[chave].set(True)
+                    caixa.configure(state="normal")
+
+        ocupante_combo.bind("<<ComboboxSelected>>",alternar_tipo_relatorio)
 
         def gerar():
-            selecionadas=[chave for chave,var in opcoes.items() if var.get()]
+            individual=ocupante.get()!="Todos os ocupantes"
+            selecionadas=(
+                ["detalhado"] if individual else
+                [chave for chave,var in opcoes.items() if var.get()]
+            )
             if not selecionadas:
                 messagebox.showwarning("Selecione o conteúdo","Marque ao menos uma seção do relatório.",parent=win)
                 return
@@ -2100,7 +2368,7 @@ class App:
             messagebox.showinfo("Relatório concluído",f"PDF salvo em:\n{path}",parent=self.root)
 
         botoes=ttk.Frame(moldura)
-        botoes.grid(row=8,column=0,columnspan=2,sticky="e",pady=(16,0))
+        botoes.grid(row=9,column=0,columnspan=2,sticky="e",pady=(16,0))
         ttk.Button(botoes,text="Cancelar",command=win.destroy).pack(side="right")
         ttk.Button(botoes,text="Salvar PDF",command=gerar).pack(side="right",padx=(0,8))
         win.grab_set()
@@ -2122,6 +2390,7 @@ class App:
         if periodo is None:
             raise ValueError(f"N\u00e3o h\u00e1 dados carregados para {mes:02d}/{ano}.")
         contas=self.contas_mes(periodo["id"])
+        opcoes_relatorio=("detalhado",) if ocupante_id is not None else opcoes
         consulta=(
             "SELECT l.*,o.nome FROM lancamentos l JOIN ocupantes o ON o.id=l.ocupante_id "
             "WHERE l.mes_id=?"
@@ -2140,26 +2409,50 @@ class App:
                                   fontSize=17,leading=21,textColor=colors.HexColor("#18212b"),
                                   alignment=TA_CENTER,spaceAfter=5))
         styles.add(ParagraphStyle(name="SectionTitle",parent=styles["Heading2"],fontSize=12,
-                                  leading=15,textColor=colors.HexColor("#17645e"),spaceBefore=10,
+                                  leading=15,textColor=colors.HexColor("#245A9B"),spaceBefore=10,
                                   spaceAfter=6))
         styles.add(ParagraphStyle(name="Small",parent=styles["BodyText"],fontSize=8,leading=10))
+        styles.add(ParagraphStyle(name="ReportNote",parent=styles["Small"],
+                                  textColor=colors.HexColor("#596b7b"),spaceBefore=3))
+        styles.add(ParagraphStyle(name="ReportStatus",parent=styles["Small"],
+                                  fontName="Helvetica-Bold",fontSize=9,leading=12,
+                                  textColor=colors.HexColor("#245A9B"),spaceBefore=4))
+        styles.add(ParagraphStyle(name="FinancialValue",parent=styles["Small"],
+                                  fontName="Helvetica-Bold"))
+        styles.add(ParagraphStyle(name="FinancialLabel",parent=styles["Small"],
+                                  fontName="Helvetica-Bold",
+                                  textColor=colors.HexColor("#18212b")))
         def paragrafo(valor,estilo="Small"):
             return Paragraph(escape(str(valor)).replace("\n","<br/>"),styles[estilo])
-        def tabela(dados,larguras,header=True):
+        def tabela(dados,larguras,header=True,linhas_resumo=()):
             tabela_pdf=Table(dados,colWidths=larguras,repeatRows=1 if header else 0)
-            tabela_pdf.setStyle(TableStyle([
+            estilos=[
                 ("VALIGN",(0,0),(-1,-1),"TOP"),
-                ("GRID",(0,0),(-1,-1),0.35,colors.HexColor("#cbd3da")),
-                ("BACKGROUND",(0,0),(-1,0),colors.HexColor("#e8eef2")) if header else
+                ("GRID",(0,0),(-1,-1),0.3,colors.HexColor("#d5dde3")),
+                ("ROWBACKGROUNDS",(0,1 if header else 0),(-1,-1),
+                 [colors.white,colors.HexColor("#f5f8fa")]),
+                ("BACKGROUND",(0,0),(-1,0),colors.HexColor("#245A9B")) if header else
                 ("BACKGROUND",(0,0),(-1,-1),colors.white),
+                ("TEXTCOLOR",(0,0),(-1,0),colors.white) if header else
+                ("TEXTCOLOR",(0,0),(-1,-1),colors.HexColor("#18212b")),
+                ("ALIGN",(-1,0),(-1,-1),"RIGHT"),
                 ("LEFTPADDING",(0,0),(-1,-1),5),("RIGHTPADDING",(0,0),(-1,-1),5),
                 ("TOPPADDING",(0,0),(-1,-1),4),("BOTTOMPADDING",(0,0),(-1,-1),4),
-            ]))
+            ]
+            for linha,cor in linhas_resumo:
+                estilos.extend([
+                    ("BACKGROUND",(0,linha),(-1,linha),cor),
+                    ("LINEABOVE",(0,linha),(-1,linha),0.8,colors.HexColor("#245A9B")),
+                ])
+            tabela_pdf.setStyle(TableStyle(estilos))
             return tabela_pdf
         styles.add(ParagraphStyle(name="TableHeader",parent=styles["Small"],
-                                  fontName="Helvetica-Bold"))
+                                  fontName="Helvetica-Bold",textColor=colors.white))
         story=[
-            Paragraph(f"Relatório mensal — {mes:02d}/{ano}",styles["ReportTitle"]),
+            Paragraph(
+                f"{'Conta individual' if ocupante_id is not None else 'Relatório mensal'} — {mes:02d}/{ano}",
+                styles["ReportTitle"],
+            ),
             paragrafo("Gerado em "+datetime.now().strftime("%d/%m/%Y %H:%M")),
             Spacer(1,4*mm),
         ]
@@ -2177,17 +2470,29 @@ class App:
             totais[2]+=saldo
             linhas_detalhe.append((row,cobrancas,total,pago,saldo))
 
-        if "resumo" in opcoes:
-            story.append(Paragraph("Resumo",styles["SectionTitle"]))
+        if "resumo" in opcoes_relatorio or ocupante_id is not None:
+            story.append(Paragraph(
+                "Resumo da conta" if ocupante_id is not None else "Resumo financeiro",
+                styles["SectionTitle"],
+            ))
+            story.append(paragrafo("Valores em reais (R$)."))
             dados=[
-                [paragrafo("Total cobrado", "TableHeader"),
-                 paragrafo("Total recebido", "TableHeader"),
-                 paragrafo("Saldo em aberto", "TableHeader")],
-                [paragrafo(moeda(totais[0])),paragrafo(moeda(totais[1])),paragrafo(moeda(totais[2]))],
+                [paragrafo("Total cobrado", "FinancialLabel"),
+                 paragrafo("Recebido", "FinancialLabel"),
+                 paragrafo("Saldo a pagar", "FinancialLabel")],
+                [paragrafo(moeda(totais[0]),"FinancialValue"),
+                 paragrafo(moeda(totais[1]),"FinancialValue"),
+                 paragrafo(moeda(totais[2]),"FinancialValue")],
             ]
-            story.append(tabela(dados,[85*mm,85*mm,85*mm]))
+            story.append(tabela(
+                dados,[85*mm,85*mm,85*mm],header=False,
+                linhas_resumo=((1,colors.HexColor("#e7f0fb")),),
+            ))
+            situacao="Quitado" if totais[2]<=0 else "Em aberto"
+            story.append(paragrafo(f"Situação: {situacao}","ReportStatus"))
+            story.append(Spacer(1,2*mm))
 
-        if "contas" in opcoes:
+        if "contas" in opcoes_relatorio:
             story.append(Paragraph("Contas e rateios do mês",styles["SectionTitle"]))
             contas_dados=[
                 [paragrafo("Item","TableHeader"),paragrafo("Valor / quantidade","TableHeader")],
@@ -2211,33 +2516,45 @@ class App:
                               paragrafo(moeda(d["valor"]))] for d in despesas)
                 story.append(tabela(dados,[80*mm,80*mm,80*mm]))
 
-        if "detalhado" in opcoes:
-            story.append(Paragraph("Detalhamento por ocupante",styles["SectionTitle"]))
+        if "detalhado" in opcoes_relatorio:
+            story.append(Paragraph(
+                "Conta individual" if ocupante_id is not None else "Detalhamento por ocupante",
+                styles["SectionTitle"],
+            ))
             if not lancamentos:
                 story.append(paragrafo("Nenhum lançamento cadastrado neste mês."))
             for row,cobrancas,total,pago,saldo in linhas_detalhe:
                 story.append(Paragraph(escape(row["nome"]),styles["Heading3"]))
-                dados=[[paragrafo("Cobrança","TableHeader"),paragrafo("Valor","TableHeader")]]
+                dados=[[paragrafo("Cobranças do mês","TableHeader"),paragrafo("Valor","TableHeader")]]
                 for chave,label in COBRANCAS:
                     dados.append([paragrafo(label),paragrafo(moeda(cobrancas[chave]))])
-                pago_manual=self.conn.execute(
-                    "SELECT COALESCE(SUM(valor),0) FROM pagamentos "
-                    "WHERE lancamento_id=? AND revertido_em IS NULL",(row["id"],)
-                ).fetchone()[0]
-                baixa=self.baixa_automatica(row,total,pago_manual)
                 dados.extend([
-                    [paragrafo("Total","TableHeader"),paragrafo(moeda(total),"TableHeader")],
-                    [paragrafo("Pagamentos registrados"),paragrafo(moeda(pago_manual))],
-                    [paragrafo("Baixa automática"),paragrafo(moeda(baixa))],
-                    [paragrafo("Recebido"),paragrafo(moeda(pago))],
-                    [paragrafo("Saldo em aberto"),paragrafo(moeda(saldo))],
+                    [paragrafo("Total cobrado","FinancialLabel"),
+                     paragrafo(moeda(total),"FinancialValue")],
+                    [paragrafo("Recebido","FinancialLabel"),
+                     paragrafo(moeda(pago),"FinancialValue")],
+                    [paragrafo("Saldo a pagar","FinancialLabel"),
+                     paragrafo(moeda(saldo),"FinancialValue")],
                 ])
-                story.append(tabela(dados,[150*mm,90*mm]))
+                linhas_resumo_inicio=len(COBRANCAS)+1
+                story.append(tabela(
+                    dados,[150*mm,90*mm],
+                    linhas_resumo=(
+                        (linhas_resumo_inicio,colors.HexColor("#e8eef2")),
+                        (linhas_resumo_inicio+1,colors.HexColor("#e7f0fb")),
+                        (linhas_resumo_inicio+2,colors.HexColor("#fff3dc")),
+                    ),
+                ))
+                story.append(paragrafo(
+                    "O valor recebido inclui pagamentos confirmados e, quando houver, a baixa automática.",
+                    "ReportNote",
+                ))
                 pagamentos=self.conn.execute(
                     "SELECT data_pagamento,valor,forma,revertido_em FROM pagamentos "
                     "WHERE lancamento_id=? ORDER BY data_pagamento,id",(row["id"],)
                 ).fetchall()
                 if pagamentos:
+                    story.append(Paragraph("Histórico de pagamentos",styles["Heading4"]))
                     dados=[[paragrafo("Data","TableHeader"),paragrafo("Valor","TableHeader"),
                             paragrafo("Forma","TableHeader"),paragrafo("Situação","TableHeader")]]
                     for pagamento in pagamentos:

@@ -1,10 +1,11 @@
 """Janela principal única do Sistemas Revisa."""
 import os
+import sqlite3
 import subprocess
 import sys
 import threading
 import tkinter as tk
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from time import monotonic
 from tkinter import filedialog, messagebox, ttk
@@ -15,9 +16,12 @@ from ..core.logs import get_logger
 from ..core.security import AttemptLimiter, Session, MODULE_ENERGIA, MODULE_FOLHA
 from ..modules import energia, folha
 from . import theme as t
+from .scroll import ScrollArea
 
 USER_NAME = "JORGE"
-COMPANY_NAME = "FTS DISTRIBUIDORA DE PEÇAS LTDA"
+COMPANY_NAME = "SISTEMA INTERNO JORGE ALBERTO"
+LOGIN_BRAND_WIDTH = 96
+LOGIN_BRAND_GAP = 8
 LEGACY_PROCESSES = {
     "FolhaPagamentoRevisa_1_140.exe": (MODULE_FOLHA,),
     "Controle_Energia_Agua.exe": (MODULE_ENERGIA,),
@@ -32,6 +36,32 @@ NAVIGATION = (
     ("sobre", "Sobre", "sobre"),
 )
 PAGE_TITLES = {key: text for key, text, _icon in NAVIGATION}
+
+
+def monitor_work_area(x, y):
+    import ctypes
+    from ctypes import wintypes
+
+    class MonitorInfo(ctypes.Structure):
+        _fields_ = [
+            ("cbSize", wintypes.DWORD),
+            ("rcMonitor", wintypes.RECT),
+            ("rcWork", wintypes.RECT),
+            ("dwFlags", wintypes.DWORD),
+        ]
+
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    user32.MonitorFromPoint.argtypes = (wintypes.POINT, wintypes.DWORD)
+    user32.MonitorFromPoint.restype = wintypes.HANDLE
+    user32.GetMonitorInfoW.argtypes = (wintypes.HANDLE, ctypes.POINTER(MonitorInfo))
+    user32.GetMonitorInfoW.restype = wintypes.BOOL
+    monitor = user32.MonitorFromPoint(wintypes.POINT(x, y), 2)
+    info = MonitorInfo()
+    info.cbSize = ctypes.sizeof(info)
+    if not user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
+        raise ctypes.WinError(ctypes.get_last_error())
+    rect = info.rcWork
+    return rect.left, rect.top, rect.right, rect.bottom
 
 
 def running_legacy_programs():
@@ -58,9 +88,11 @@ class MainWindow(tk.Tk):
         self.current = None
         self.images = {}
         self.icon_images = {}
+        self.login_size = (520, 250)
         self.clock_job = None
         self.busy = False
-        self.title(f"{APP_NAME}  •  v{APP_VERSION}")
+        self.meter_reminder_prompted_date = None
+        self.title(f"v{APP_VERSION}")
         self.configure(bg=t.BG)
         try:
             self.iconbitmap(str(paths.asset("revisa.ico")))
@@ -74,16 +106,22 @@ class MainWindow(tk.Tk):
             self.style.theme_use("clam")
         except tk.TclError:
             pass
+        self.bind_class("Toplevel", "<Map>", self._center_open_toplevel, add="+")
         self.auto_sync_notice = ""
+        self.auto_sync_resume_pending = False
         self._show_startup_splash()
         try:
-            self._automatic_sync_startup()
-            self._close_startup_splash()
+            self._automatic_sync_startup(prompt_for_resume=True)
+            self._wait_for_startup_splash()
             self.show_login()
         finally:
             self._close_startup_splash()
+        if self.current is None:
+            self._resize_login_window(*self.login_size)
         self.deiconify()
         self.lift()
+        if self._confirm_local_resume():
+            self.show_login()
 
     def _show_startup_splash(self):
         self.startup_splash_started = monotonic()
@@ -104,17 +142,18 @@ class MainWindow(tk.Tk):
         self.deiconify()
         self.update()
 
+    def _wait_for_startup_splash(self):
+        remaining_ms = 3000 - int((monotonic() - self.startup_splash_started) * 1000)
+        if remaining_ms > 0:
+            self.after(remaining_ms)
+
     def _close_startup_splash(self):
         splash_label = getattr(self, "startup_splash_label", None)
-        if splash_label is not None:
-            remaining_ms = 3000 - int((monotonic() - self.startup_splash_started) * 1000)
-            if remaining_ms > 0:
-                self.after(remaining_ms)
+        if splash_label is not None and splash_label.winfo_exists():
             splash_label.destroy()
-            self.startup_splash_label = None
-            self.attributes("-topmost", False)
-            self.overrideredirect(False)
-            self.minsize(560, 280)
+        self.startup_splash_label = None
+        self.attributes("-topmost", False)
+        self.overrideredirect(False)
 
     # ------------------------------------------------------------------ utilidades
     def _clear(self):
@@ -161,80 +200,95 @@ class MainWindow(tk.Tk):
                              font=("Segoe UI Semibold", 9), relief="flat")
         self.style.map("Shell.Treeview.Heading", background=[("active", t.SELECTED)])
 
-    def _title_band(self, subtitle=""):
-        band = tk.Frame(self, bg=t.PRIMARY, height=36)
-        band.pack(side="top", fill="x")
-        band.pack_propagate(False)
-        tk.Label(band, text="Sistemas Revisa", bg=t.PRIMARY, fg="#FFFFFF",
-                 font=("Segoe UI Semibold", 14)).pack(side="left", padx=(14, 8))
-        title = tk.Label(band, text=subtitle, bg=t.PRIMARY, fg="#DCEBFA", font=("Segoe UI", 11))
-        title.pack(side="left")
-        info = tk.Label(band, text="", bg=t.PRIMARY, fg="#DCEBFA", font=t.FONT_SMALL)
-        info.pack(side="right", padx=14)
-        tk.Frame(self, bg=t.ORANGE, height=3).pack(side="top", fill="x")
-        return title, info
-
     # ------------------------------------------------------------------ login
-    def _center_window(self, width, height):
-        screen_w, screen_h = self.winfo_screenwidth(), self.winfo_screenheight()
-        width, height = min(width, screen_w - 40), min(height, screen_h - 80)
-        self.geometry(f"{width}x{height}+{max(0, (screen_w - width) // 2)}+"
-                      f"{max(0, (screen_h - height) // 2)}")
+    def _monitor_work_area(self):
+        if self.winfo_ismapped():
+            x = self.winfo_rootx() + self.winfo_width() // 2
+            y = self.winfo_rooty() + self.winfo_height() // 2
+        else:
+            x, y = self.winfo_pointerxy()
+        if sys.platform == "win32":
+            try:
+                return monitor_work_area(x, y)
+            except OSError:
+                self.log.exception("Não foi possível identificar o monitor da janela")
+        return 0, 0, self.winfo_screenwidth(), self.winfo_screenheight()
 
-    def _resize_login_window(self):
+    def _center_window(self, width, height):
+        self.update_idletasks()
+        left, top, right, bottom = self._monitor_work_area()
+        screen_w, screen_h = right - left, bottom - top
+        width, height = min(width, screen_w - 40), min(height, screen_h - 80)
+        x = left + (screen_w - width) // 2
+        y = top + (screen_h - height) // 2
+        self.geometry(f"{width}x{height}+{x}+{y}")
+
+    def _center_open_toplevel(self, event):
+        window = event.widget
+        window.update_idletasks()
+        width, height = window.winfo_width(), window.winfo_height()
+        left, top, right, bottom = self._monitor_work_area()
+        screen_w, screen_h = right - left, bottom - top
+        width, height = min(width, screen_w - 40), min(height, screen_h - 80)
+        x = left + (screen_w - width) // 2
+        y = top + (screen_h - height) // 2
+        window.geometry(f"{width}x{height}+{x}+{y}")
+
+    def _resize_login_window(self, width=520, height=250):
         try:
             self.state("normal")
         except tk.TclError:
             pass
-        self.minsize(560, 280)
-        self._center_window(610, 300)
+        self.minsize(480, 230)
+        self._center_window(width, height)
 
     def _resize_shell_window(self):
         width, height = 1320, 820
-        screen_w, screen_h = self.winfo_screenwidth(), self.winfo_screenheight()
+        left, top, right, bottom = self._monitor_work_area()
+        screen_w, screen_h = right - left, bottom - top
         width, height = min(width, screen_w - 40), min(height, screen_h - 80)
         self.minsize(min(980, screen_w - 40), min(600, screen_h - 80))
         self._center_window(width, height)
-        self.after_idle(self.state, "zoomed")
+        self.update_idletasks()
+        self.state("zoomed")
 
     def show_login(self):
         self._clear()
         self.modules.clear()
         self.pages.clear()
         self.current = None
-        self._resize_login_window()
         outer = tk.Frame(self, bg=t.BG)
         outer.pack(fill="both", expand=True)
         box = tk.Frame(outer, bg=t.SURFACE, highlightbackground=t.BORDER, highlightthickness=1)
         box.pack(fill="both", expand=True)
         box.columnconfigure(0, weight=1)
         box.rowconfigure(2, weight=1)
-        header = tk.Frame(box, bg=t.PRIMARY, height=54)
+        header = tk.Frame(box, bg=t.PRIMARY, height=44)
         header.grid(row=0, column=0, sticky="ew")
         header.pack_propagate(False)
         heading = tk.Frame(header, bg=t.PRIMARY)
-        heading.pack(side="left", fill="y", padx=16, pady=5)
-        t.label(heading, "SISTEMAS REVISA", 15, "#FFFFFF", True, bg=t.PRIMARY).pack(anchor="w")
-        t.label(heading, "ACESSO AO SISTEMA", 8, "#DCEBFA", True, bg=t.PRIMARY).pack(anchor="w")
+        heading.pack(side="left", fill="y", padx=12, pady=3)
+        t.label(heading, "SISTEMAS REVISA", 12, "#FFFFFF", True, bg=t.PRIMARY).pack(anchor="w")
+        t.label(heading, "ACESSO AO SISTEMA", 7, "#DCEBFA", True, bg=t.PRIMARY).pack(anchor="w")
         tk.Frame(box, bg=t.ORANGE, height=3).grid(row=1, column=0, sticky="ew")
-        content = tk.Frame(box, bg=t.SURFACE, padx=12, pady=8)
+        content = tk.Frame(box, bg=t.SURFACE, padx=10, pady=6)
         content.grid(row=2, column=0, sticky="nsew")
         content.columnconfigure(1, weight=1)
         content.rowconfigure(0, weight=1)
         footer = self._build_login_footer(box)
         footer.grid(row=3, column=0, sticky="ew")
-        brand = tk.Frame(content, bg=t.SURFACE, width=135)
-        brand.grid(row=0, column=0, sticky="ns", padx=(0, 12))
+        brand = tk.Frame(content, bg=t.SURFACE, width=LOGIN_BRAND_WIDTH)
+        brand.grid(row=0, column=0, sticky="ns", padx=(0, LOGIN_BRAND_GAP))
         brand.pack_propagate(False)
-        logo = self._logo("login", (108, 100))
+        logo = self._logo("login", (64, 64))
         if logo:
-            tk.Label(brand, image=logo, bg=t.SURFACE).pack(pady=(0, 6))
-        tk.Frame(brand, bg=t.BORDER, height=1).pack(fill="x", pady=(0, 7))
-        t.label(brand, "FTS DISTRIBUIDORA DE PEÇAS LTDA", 9, t.PRIMARY_DARK, True,
-                bg=t.SURFACE, wraplength=132, justify="center").pack(fill="x")
+            tk.Label(brand, image=logo, bg=t.SURFACE).pack(pady=(0, 2))
+        t.label(brand, "FTS DISTRIBUIDORA\nDE PEÇAS LTDA", 7, t.PRIMARY_DARK, True,
+                bg=t.SURFACE, wraplength=94, justify="center").pack(fill="x")
         body = tk.Frame(content, bg=t.SURFACE)
         body.grid(row=0, column=1, sticky="nsew")
         self.login_body = body
+        login_size = (520, 250)
         try:
             state = folha.status()
             if state != "ausente":
@@ -245,15 +299,17 @@ class MainWindow(tk.Tk):
             t.label(body, "Não foi possível abrir o banco principal", 14, t.TEXT, True).pack(pady=(4, 6))
             t.label(body, str(error), 10, t.MUTED, wraplength=380, justify="left").pack(anchor="w")
             t.button(body, "Tentar novamente", self.show_login).pack(fill="x", pady=(16, 0))
-            return
-        if state == "ausente":
-            self._center_window(650, 420)
-            self._login_missing_database(body)
-        elif state == "sem_senha":
-            self._center_window(610, 430)
-            self._login_form(body, create=True)
         else:
-            self._login_form(body, create=False)
+            if state == "ausente":
+                login_size = (580, 390)
+                self._login_missing_database(body)
+            elif state == "sem_senha":
+                login_size = (520, 360)
+                self._login_form(body, create=True)
+            else:
+                self._login_form(body, create=False)
+        self.login_size = login_size
+        self._resize_login_window(*login_size)
 
     def _login_missing_database(self, body):
         t.label(body, "Banco da Folha não encontrado", 15, t.TEXT, True).pack(pady=(4, 6))
@@ -286,7 +342,11 @@ class MainWindow(tk.Tk):
         form = tk.Frame(body, bg=t.SURFACE)
         body.columnconfigure(0, weight=1)
         body.rowconfigure(0, weight=1)
-        form.grid(row=0, column=0)
+        form.grid(
+            row=0,
+            column=0,
+            padx=(0, LOGIN_BRAND_WIDTH + LOGIN_BRAND_GAP),
+        )
         if create:
             t.label(form, "Cadastre a senha principal", 14, t.TEXT, True).pack(anchor="w", pady=(2, 4))
         else:
@@ -323,8 +383,8 @@ class MainWindow(tk.Tk):
         self.login_fields[0].focus_set()
 
     def _build_login_footer(self, parent):
-        footer = tk.Frame(parent, bg=t.PRIMARY, height=76)
-        footer.pack_propagate(False)
+        footer = tk.Frame(parent, bg=t.PRIMARY, height=66)
+        footer.rowconfigure(0, weight=1)
         for column in (0, 2, 4):
             footer.columnconfigure(column, weight=1, uniform="login_footer")
 
@@ -337,12 +397,32 @@ class MainWindow(tk.Tk):
             if index:
                 tk.Frame(footer, bg=t.BORDER, width=1).grid(
                     row=0, column=index * 2 - 1, sticky="ns", pady=9)
-            cell = tk.Frame(footer, bg=t.PRIMARY, padx=9, pady=7)
+            cell = tk.Frame(footer, bg=t.PRIMARY, padx=7, pady=5)
             cell.grid(row=0, column=index * 2, sticky="nsew")
-            t.label(cell, heading, 8, "#FFFFFF", True, bg=t.PRIMARY).pack(anchor="w")
+            content = tk.Frame(cell, bg=t.PRIMARY)
+            content.pack(expand=True)
+            cell = content
+            if index == 0:
+                if "developer_robot" not in self.images:
+                    from PIL import Image, ImageTk
+                    try:
+                        with Image.open(paths.asset("robo_desenvolvedor.png")) as source:
+                            image = source.convert("RGBA")
+                            image.thumbnail((36, 36), Image.Resampling.LANCZOS)
+                            self.images["developer_robot"] = ImageTk.PhotoImage(image, master=self)
+                    except OSError:
+                        self.log.exception("Falha ao carregar a imagem do desenvolvedor")
+                        raise
+                tk.Label(cell, image=self.images["developer_robot"], bg=t.PRIMARY,
+                         borderwidth=0).pack(side="left", padx=(0, 6))
+                text_cell = tk.Frame(cell, bg=t.PRIMARY)
+                text_cell.pack(side="left")
+                cell = text_cell
+            t.label(cell, heading, 7, "#FFFFFF", True, bg=t.PRIMARY).pack(anchor="center")
             if value:
-                t.label(cell, value, 8, color, bg=t.PRIMARY,
-                        wraplength=165, justify="left").pack(anchor="w", pady=(2, 0))
+                t.label(cell, value, 7, color, bg=t.PRIMARY,
+                        wraplength=103 if index == 0 else 145,
+                        justify="center").pack(anchor="center", pady=(2, 0))
             else:
                 sync_text, sync_color = self._login_sync_status()
                 signing_text, signing_color = self._login_signing_status()
@@ -360,8 +440,8 @@ class MainWindow(tk.Tk):
         }
         background, foreground = palette.get(color, ("#DBEAFE", "#1E3A8A"))
         tk.Label(parent, text=text, bg=background, fg=foreground,
-                 font=("Segoe UI", 8), padx=4, pady=1, wraplength=165,
-                 justify="left", anchor="w").pack(anchor="w", pady=(2, 0))
+                 font=("Segoe UI", 7), padx=3, pady=1, wraplength=145,
+                 justify="center", anchor="center").pack(anchor="center", pady=(2, 0))
 
     def _login_sync_status(self):
         try:
@@ -372,10 +452,10 @@ class MainWindow(tk.Tk):
         except Exception as error:
             self.log.exception("Falha ao consultar o status da sincronização no login")
             return "Sincronização: falha", t.DANGER
-        if not state.get("titular", True):
-            return "Sincronização: aguardando o outro PC", t.WARNING
         if self.auto_sync_notice == "falha":
             return "Sincronização: falha", t.DANGER
+        if not state.get("titular", True):
+            return "Sincronização: aguardando o outro PC", t.WARNING
         if self.auto_sync_notice == "ok":
             return "Sincronização: OK", t.SUCCESS
         return "Sincronização: ativa", t.SUCCESS
@@ -446,15 +526,91 @@ class MainWindow(tk.Tk):
     def show_shell(self):
         self.session.require()
         self._clear()
-        self._resize_shell_window()
         self.apply_shell_style()
         self._build_menu()
-        self.header_title, self.header_info = self._title_band()
+        self._build_toolbar()
         self._build_status_bar()
         self.content = tk.Frame(self, bg=t.BG)
         self.content.pack(side="top", fill="both", expand=True)
         self.update_header()
         self.navigate("painel")
+        self.after_idle(self._prompt_meter_readings)
+        self._resize_shell_window()
+
+    def _prompt_meter_readings(self):
+        today = date.today()
+        if today.day < 5:
+            return
+        if self.meter_reminder_prompted_date == today:
+            return
+        previous_month = (today.replace(day=1) - timedelta(days=1)).replace(day=1)
+        try:
+            settings = config.load()
+        except (OSError, ValueError) as error:
+            self.log.exception("Falha ao consultar a confirmação da leitura de energia")
+            messagebox.showerror(
+                "Leituras dos medidores",
+                f"Não foi possível verificar a confirmação da leitura:\n{error}",
+                parent=self,
+            )
+            return
+        period = f"{previous_month:%Y-%m}"
+        if period in settings["leituras_confirmadas"]:
+            return
+        self.meter_reminder_prompted_date = today
+        if self._ask_meter_reading_status(previous_month):
+            settings["leituras_confirmadas"].append(period)
+            try:
+                config.save(settings)
+            except (OSError, ValueError) as error:
+                self.log.exception("Falha ao salvar a confirmação da leitura de energia")
+                messagebox.showerror(
+                    "Leitura não confirmada",
+                    f"Não foi possível salvar a confirmação:\n{error}",
+                    parent=self,
+                )
+                self.after(24 * 60 * 60 * 1000, self._prompt_meter_readings)
+                return
+        else:
+            self.after(24 * 60 * 60 * 1000, self._prompt_meter_readings)
+
+    def _ask_meter_reading_status(self, period):
+        dialog = tk.Toplevel(self)
+        dialog.title("Leitura do medidor")
+        dialog.configure(bg=t.SURFACE)
+        dialog.resizable(False, False)
+        dialog.transient(self)
+        result = {"ok": False}
+        body = tk.Frame(dialog, bg=t.SURFACE, padx=24, pady=20)
+        body.pack(fill="both", expand=True)
+        t.label(body, "Leitura de energia", 14, t.TEXT, True).pack(anchor="w")
+        t.label(
+            body,
+            f"As leituras referentes a {period:%m/%Y} estão preenchidas e conferidas?",
+            10,
+            t.MUTED,
+            wraplength=360,
+            justify="left",
+        ).pack(anchor="w", pady=(8, 16))
+        buttons = tk.Frame(body, bg=t.SURFACE)
+        buttons.pack(fill="x")
+
+        def finish(confirmed):
+            result["ok"] = confirmed
+            dialog.destroy()
+
+        t.button(buttons, "Leitura OK", lambda: finish(True)).pack(side="left")
+        t.button(
+            buttons, "Não OK", lambda: finish(False), kind="secondary"
+        ).pack(side="left", padx=(8, 0))
+        dialog.protocol("WM_DELETE_WINDOW", lambda: finish(False))
+        dialog.update_idletasks()
+        x = self.winfo_rootx() + (self.winfo_width() - dialog.winfo_reqwidth()) // 2
+        y = self.winfo_rooty() + (self.winfo_height() - dialog.winfo_reqheight()) // 3
+        dialog.geometry(f"+{max(0, x)}+{max(0, y)}")
+        dialog.grab_set()
+        self.wait_window(dialog)
+        return result["ok"]
 
     def _build_menu(self):
         from .pages import change_main_password
@@ -491,15 +647,55 @@ class MainWindow(tk.Tk):
         self.config(menu=bar)
         self.menu_bar = bar
 
+    def _build_toolbar(self):
+        bar = tk.Frame(self, bg="#F0F0F0", height=78, relief="groove", bd=1)
+        bar.pack(side="top", fill="x")
+        bar.pack_propagate(False)
+        shortcuts = (
+            ("Painel", "painel", lambda: self.navigate("painel")),
+            ("Folha", "folha", lambda: self.navigate(MODULE_FOLHA)),
+            ("Energia e Água", "energia", lambda: self.navigate(MODULE_ENERGIA)),
+            ("Backups", "backups", lambda: self.navigate("backups")),
+            ("Administração", "admin", lambda: self.navigate("admin")),
+            ("Sobre", "sobre", lambda: self.navigate("sobre")),
+            ("Sair", "sair", self.on_close),
+        )
+        buttons = []
+        for label, icon, command in shortcuts:
+            image = self._icon(icon, 28)
+            button = tk.Button(
+                bar, text=label, image=image or "", compound="top", command=command,
+                bg="#F0F0F0", fg=t.TEXT, activebackground="#DCEBFA", activeforeground=t.TEXT,
+                relief="flat", bd=0, font=("Segoe UI", 9), padx=8, pady=4,
+                highlightthickness=0, cursor="hand2",
+            )
+            buttons.append(button)
+            button.bind("<Enter>", lambda _event, item=button: item.configure(bg="#E3EDF7"))
+            button.bind("<Leave>", lambda _event, item=button: item.configure(bg="#F0F0F0"))
+        bar.update_idletasks()
+        cell_width = max(button.winfo_reqwidth() for button in buttons)
+        bar.grid_rowconfigure(0, weight=1)
+        for column, button in enumerate(buttons):
+            bar.grid_columnconfigure(column, minsize=cell_width, uniform="toolbar")
+            button.grid(row=0, column=column, sticky="nsew", padx=2)
+
     def _menu_change_password(self, dialog):
         try:
             self.session.require()
         except PermissionError:
             self.show_login()
             return
+        from .pages import verify_main_password
+        if not verify_main_password(
+                self, "Alterar senha", "Digite a senha principal para continuar:"):
+            return
         dialog(self)
 
     def open_backup_folder(self):
+        from .pages import verify_main_password
+        if not verify_main_password(
+                self, "Acesso aos backups", "Digite a senha principal para abrir os backups:"):
+            return
         folder = paths.backups_dir()
         try:
             folder.mkdir(parents=True, exist_ok=True)
@@ -513,6 +709,10 @@ class MainWindow(tk.Tk):
             self.session.require(key)
         except PermissionError:
             self.show_login()
+            return
+        from .pages import verify_main_password
+        if not verify_main_password(
+                self, "Alterar senha", "Digite a senha principal para continuar:"):
             return
         if self.busy:
             messagebox.showinfo("Aguarde", "Há uma operação em andamento.", parent=self)
@@ -574,10 +774,10 @@ class MainWindow(tk.Tk):
 
     def update_header(self):
         started = self.session.started.strftime("%d/%m/%Y %H:%M") if self.session.started else "—"
-        self.header_info.configure(text=f"{COMPANY_NAME}")
         if getattr(self, "status_user", None) and self.status_user.winfo_exists():
             self.status_user.configure(text=f"Usuário: {self.session.user}  •  sessão desde {started}")
-            self.status_module.configure(text=f"Módulo: {PAGE_TITLES.get(self.current, '—')}")
+            title = getattr(self, "current_title", PAGE_TITLES.get(self.current, "—"))
+            self.status_module.configure(text=f"Módulo: {title}")
 
     def _show_frame(self, key, frame, title):
         for other in list(self.pages.values()) + [m["container"] for m in self.modules.values()]:
@@ -585,8 +785,11 @@ class MainWindow(tk.Tk):
                 other.pack_forget()
         frame.pack(fill="both", expand=True)
         self.current = key
-        self.header_title.configure(text=f"—  {title}")
+        self.current_title = title
         self.update_header()
+        if key in (MODULE_FOLHA, MODULE_ENERGIA) and self.state() == "normal":
+            self.update_idletasks()
+            self._center_window(self.winfo_width(), self.winfo_height())
 
     def navigate(self, key):
         try:
@@ -597,6 +800,12 @@ class MainWindow(tk.Tk):
         if self.busy:
             messagebox.showinfo("Aguarde", "Há uma operação em andamento.", parent=self)
             return
+        if key == "backups":
+            from .pages import verify_main_password
+            if not verify_main_password(
+                    self, "Acesso a backups e transferência",
+                    "Digite a senha principal para abrir esta área:"):
+                return
         if key in (MODULE_FOLHA, MODULE_ENERGIA):
             self.open_module(key)
             return
@@ -620,6 +829,9 @@ class MainWindow(tk.Tk):
             settings = config.load()
             if not settings["transferencia_habilitada"]:
                 return None
+            if getattr(self, "auto_sync_notice", "") == "falha":
+                return ("Não foi possível receber os dados sincronizados: "
+                        + getattr(self, "auto_sync_error", "consulte o log da sincronização."))
             state = transfer.load_state(paths.transfer_state_path())
         except Exception as error:
             return f"Não foi possível ler o estado da transferência: {error}"
@@ -666,7 +878,7 @@ class MainWindow(tk.Tk):
         try:
             package = transfer.export_package(
                 self.databases(), config.transfer_dir(settings), state,
-                paths.transfer_state_path(), APP_VERSION)
+                paths.transfer_state_path(), APP_VERSION, cede_turn=True)
         except Exception as error:
             self.log.exception("Falha ao enviar os dados para o outro computador")
             messagebox.showerror(
@@ -720,12 +932,45 @@ class MainWindow(tk.Tk):
         messagebox.showinfo(
             "Computador liberado",
             "Este computador pode voltar a editar os dados. Não use os dois computadores ao mesmo "
-            "tempo; para trocar, escolha “Enviar dados e ceder a vez” na tela de sincronização.",
+            "tempo. Ao fechar, os dois bancos serão enviados automaticamente para a pasta compartilhada.",
             parent=self)
         self.navigate("backups")
 
-    def _automatic_sync_startup(self):
+    def _confirm_local_resume(self):
+        if not self.auto_sync_resume_pending:
+            return False
+        self.auto_sync_resume_pending = False
+        if not messagebox.askyesno(
+                "Continuar neste computador?",
+                "Este computador enviou os dados ao fechar. Quer continuar usando este PC agora?\n\n"
+                "Só confirme se o outro computador não importou este pacote ou está fechado sem "
+                "alterações. Se ele estiver usando os dados, trabalhar nos dois PCs pode criar "
+                "divergências. A retomada será recusada se os dados locais mudaram ou se houver "
+                "um pacote mais recente do outro computador.",
+                icon="warning", default="no", parent=self):
+            return False
+        try:
+            settings = config.load()
+            state_path = paths.transfer_state_path()
+            state = transfer.load_state(state_path)
+            transfer.resume_ownership(
+                state, state_path, self.databases(), config.transfer_dir(settings))
+        except Exception as error:
+            self.log.exception("Falha ao retomar a titularidade neste computador")
+            self.auto_sync_notice = "falha"
+            self.auto_sync_error = str(error)
+            messagebox.showerror(
+                "Não foi possível continuar neste PC",
+                f"Os dados não foram liberados para edição:\n{error}",
+                parent=self)
+            return False
+        self.log.info("Titularidade retomada neste PC após confirmação na abertura")
+        return True
+
+    def _automatic_sync_startup(self, prompt_for_resume=False):
         self.auto_sync_notice = ""
+        self.auto_sync_error = ""
+        self.auto_sync_resume_pending = False
         try:
             settings = config.load()
             if not settings["transferencia_habilitada"]:
@@ -734,10 +979,10 @@ class MainWindow(tk.Tk):
             state_path = paths.transfer_state_path()
             packages = transfer.list_packages(folder)
             state = transfer.load_state(state_path, default_titular=not packages)
-            if state.get("titular", True):
-                return
             if not packages:
-                self.auto_sync_notice = "falha"
+                if not state.get("titular", True):
+                    raise transfer.TransferError(
+                        "Nenhum pacote disponível. Aguarde o MEGA concluir a sincronização.")
                 return
             own_package_found = False
             for package in packages:
@@ -767,10 +1012,14 @@ class MainWindow(tk.Tk):
                               manifest["id"], backup_folder)
                 self.auto_sync_notice = "ok"
                 return
-            self.auto_sync_notice = "ok" if own_package_found else "falha"
+            if (prompt_for_resume and own_package_found
+                    and not state.get("titular", True)):
+                self.auto_sync_resume_pending = True
+            self.auto_sync_notice = "ok" if own_package_found or state.get("titular", True) else "falha"
         except Exception as error:
             self.log.exception("Falha na sincronização automática ao iniciar")
             self.auto_sync_notice = "falha"
+            self.auto_sync_error = str(error)
 
     def connect_auto_sync(self):
         folder = filedialog.askdirectory(
@@ -785,8 +1034,8 @@ class MainWindow(tk.Tk):
             messagebox.showerror(
                 "Sincronização ainda não disponível",
                 "Não encontrei pacotes completos nesta pasta. No computador que já possui os dados, "
-                "ative a sincronização, use Backups e Transferência > Acessar sincronização > "
-                "Enviar dados e ceder a vez e aguarde o MEGA terminar de enviar "
+                "ative a sincronização e feche o sistema para enviar os dois bancos. "
+                "Aguarde o MEGA terminar de enviar "
                 "o primeiro pacote. Depois, tente novamente.",
                 parent=self,
             )
@@ -823,8 +1072,8 @@ class MainWindow(tk.Tk):
             messagebox.showwarning(
                 "Nenhum pacote encontrado",
                 "Ainda não há um pacote completo nesta pasta. No computador que contém a alteração "
-                "mais recente, configure a sincronização e use Backups e Transferência > Acessar "
-                "sincronização > Enviar dados e ceder a vez. Aguarde o MEGA concluir o envio e tente "
+                "mais recente, configure a sincronização e feche o sistema. "
+                "Aguarde o MEGA concluir o envio e tente "
                 "novamente.",
                 parent=self,
             )
@@ -925,7 +1174,10 @@ class MainWindow(tk.Tk):
                 instance = folha.create_panel(module_content)
                 instance.pack(fill="both", expand=True)
             else:
-                instance = energia.create_app(module_content)
+                # A Folha já tem rolagem própria; o Energia precisa dela em telas menores (notebook).
+                scroll_area = ScrollArea(module_content, bg=t.BG)
+                scroll_area.pack(fill="both", expand=True)
+                instance = energia.create_app(scroll_area.inner)
         except Exception as error:
             self.log.exception("Falha ao abrir o módulo %s", key)
             container.destroy()
@@ -960,6 +1212,8 @@ class MainWindow(tk.Tk):
                     record["instance"].close_module()
                 else:
                     record["instance"].encerrar()
+                    target = energia.save_exit_backup()
+                    self.log.info("Backup de Energia e Água salvo em %s", target)
                 self.log.info("Módulo fechado: %s", key)
             except Exception as error:
                 self.log.exception("Falha ao fechar o módulo %s", key)
@@ -974,14 +1228,59 @@ class MainWindow(tk.Tk):
         if record is not None and getattr(record["instance"], "conn", None) is not None:
             record["instance"].conn.commit()
 
+    def _automatic_sync_shutdown(self):
+        if not self.session.authenticated:
+            return None
+        settings = config.load()
+        if not settings["transferencia_habilitada"]:
+            return None
+        state_path = paths.transfer_state_path()
+        state = transfer.load_state(state_path)
+        if not state.get("titular", True):
+            return None
+        package = transfer.export_package(
+            self.databases(), config.transfer_dir(settings), state, state_path, APP_VERSION)
+        self.log.info("Sincronização automática ao fechar exportou %s", package)
+        return package
+
     def on_close(self):
-        if self.busy and not messagebox.askyesno(
-                "Operação em andamento", "Há uma operação em andamento. Sair mesmo assim?",
-                default="no", parent=self):
+        if self.busy:
+            messagebox.showinfo(
+                "Operação em andamento",
+                "Aguarde a operação terminar antes de fechar o sistema.",
+                parent=self)
             return
+        energy_was_open = MODULE_ENERGIA in getattr(self, "modules", {})
         problems = self.close_modules()
         if problems:
-            messagebox.showwarning("Fechamento dos módulos", "\n".join(problems), parent=self)
+            if any(problem.startswith(f"{MODULE_ENERGIA}:") for problem in problems):
+                messagebox.showwarning(
+                    "Backup não finalizado",
+                    "Não foi possível finalizar o backup. O sistema permanecerá aberto.",
+                    parent=self)
+            else:
+                messagebox.showwarning(
+                    "Fechamento dos módulos", "\n".join(problems), parent=self)
+            return
+        try:
+            package = self._automatic_sync_shutdown()
+        except Exception:
+            self.log.exception("Falha na sincronização automática ao fechar")
+            messagebox.showerror(
+                "Backup não finalizado",
+                "Não foi possível finalizar o backup. O sistema permanecerá aberto.",
+                parent=self)
+            return
+        if package is not None:
+            messagebox.showinfo(
+                "Backup finalizado",
+                "Backup finalizado com sucesso.",
+                parent=self)
+        elif energy_was_open:
+            messagebox.showinfo(
+                "Backup finalizado",
+                "Backup finalizado com sucesso.",
+                parent=self)
         self.session.logout()
         self.log.info("Programa encerrado")
         self.destroy()

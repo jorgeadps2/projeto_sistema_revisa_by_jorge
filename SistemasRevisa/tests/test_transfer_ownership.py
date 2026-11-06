@@ -40,6 +40,46 @@ class TransferOwnershipTests(unittest.TestCase):
         self.assertTrue(saved["titular"])
         self.assertEqual(saved["historico"][-1]["evento"], "retomada_manual")
 
+    def test_refuses_package_missing_an_expected_database(self):
+        energy_database = self.root / "energia.db"
+        with closing(sqlite3.connect(energy_database)) as connection, connection:
+            connection.execute("CREATE TABLE records (id INTEGER PRIMARY KEY, value TEXT)")
+            connection.execute("INSERT INTO records (value) VALUES ('energy')")
+
+        package = self.transfer_dir / "SR-20261030-120000-OTHER-12345678"
+        package.mkdir()
+        database_copy = package / "folha.db"
+        backup.snapshot_db(self.database, database_copy)
+        manifest = {
+            "formato": transfer.FORMAT_VERSION,
+            "id": package.name,
+            "maquina_origem": "other-machine",
+            "criado_em_epoch": 101,
+            "pacote_anterior": self.state["ultimo_pacote"],
+            "versao_app": "1.0",
+            "bancos": {
+                "folha": {
+                    "arquivo": database_copy.name,
+                    "tamanho": database_copy.stat().st_size,
+                    "sha256": backup.sha256_file(database_copy),
+                    "resumo_logico": transfer._digest("folha", database_copy),
+                }
+            },
+        }
+        manifest_path = package / transfer.MANIFEST
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        (package / transfer.READY_MARKER).write_text(
+            backup.sha256_file(manifest_path), encoding="ascii")
+
+        report = transfer.inspect_package(
+            package,
+            self.state,
+            {"folha": self.database, "energia": energy_database},
+            "1.0",
+        )
+
+        self.assertIn("bancos ausentes no pacote: energia", report["bloqueios"])
+
     def test_refuses_to_resume_if_local_data_changed(self):
         with closing(sqlite3.connect(self.database)) as connection, connection:
             connection.execute("INSERT INTO records (value) VALUES ('changed')")
