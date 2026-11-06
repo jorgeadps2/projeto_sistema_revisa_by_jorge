@@ -48,44 +48,45 @@ class PayrollPdfTests(unittest.TestCase):
         table = next(item for item in story if isinstance(item, APP.LongTable))
         return total, story, table, text, reader
 
-    def test_credit_and_debit_colors_with_and_without_thirteenth(self):
+    def test_sober_report_preserves_rubrics_with_and_without_thirteenth(self):
         for month, earnings_count in ((10, 5), (11, 6), (12, 6)):
             with self.subTest(month=month):
                 total, story, table, text, reader = self.generate([self.row()], month)
                 self.assertEqual(total, 1050)
-                green = APP.colors.HexColor("#15803d")
+                blue = APP.colors.HexColor("#145588")
                 red = APP.colors.HexColor("#b91c1c")
                 for column in range(1, earnings_count + 1):
-                    self.assertEqual(table._cellStyles[1][column].color, green)
+                    self.assertEqual(table._cellStyles[1][column].color, blue)
                 for column in range(earnings_count + 1, len(table._cellvalues[1]) - 1):
                     self.assertEqual(table._cellStyles[1][column].color, red)
                 installment = table._cellvalues[1][-3]
                 self.assertEqual(installment.style.textColor, red)
-                self.assertEqual(table._cellStyles[1][-1].color, green)
+                self.assertEqual(table._cellStyles[1][-1].color, blue)
+                for cell in table._cellStyles[1][1:]:
+                    self.assertEqual(cell.alignment, "CENTER")
+                self.assertEqual(table._cellvalues[1][0].style.alignment, 0)
                 summary = next(item for item in story if type(item) is APP.Table)
-                self.assertEqual(summary._cellvalues[0][0].style.textColor, green)
+                self.assertEqual(summary._cellvalues[0][0].style.textColor, blue)
                 self.assertEqual(summary._cellvalues[0][1].style.textColor, red)
+                for row in summary._cellvalues:
+                    for cell in row:
+                        self.assertEqual(cell.style.alignment, 1)
                 reference_style = summary._cellvalues[0][0].style
                 self.assertEqual(reference_style.fontSize, table._cellStyles[1][1].fontsize)
                 for summary_row in summary._cellvalues:
                     for cell in summary_row:
-                        self.assertEqual(cell.style.fontSize, reference_style.fontSize)
-                        self.assertEqual(cell.style.leading, reference_style.leading)
+                        self.assertGreaterEqual(cell.style.fontSize, reference_style.fontSize)
                         self.assertEqual(cell.style.fontName, reference_style.fontName)
                 self.assertIn("1.050,00", text)
                 self.assertNotIn("em verde", text)
                 self.assertNotIn("em vermelho", text)
-                self.assertIn("Crédito", text)
-                self.assertIn("Débito", text)
-                legend = story[0]
-                self.assertEqual(legend.style.name, "PayrollLegend")
-                self.assertEqual(legend.style.alignment, 0)
-                markers = [fragment for fragment in legend.frags
-                           if fragment.text == "\u2022"]
-                self.assertEqual([marker.textColor for marker in markers],
-                                 [green, red])
-                self.assertEqual([marker.fontSize for marker in markers], [20, 20])
-                self.assertLess(text.index("Crédito"), text.index("Folha a pagar"))
+                self.assertNotIn("Crédito", text)
+                self.assertNotIn("Débito", text)
+                self.assertIn(APP.REPORT_COMPANY, text)
+                self.assertEqual(story[0].style.alignment, 0)
+                self.assertEqual(story[0].style.fontName, "Helvetica-BoldOblique")
+                self.assertFalse(table._bkgrndcmds)
+                self.assertGreaterEqual(table._cellStyles[1][1].fontsize, 7)
                 self.assertTrue(reader.pages[0].get_contents().get_data())
 
     def test_compact_rows_preserve_font_size_and_reduce_height(self):
@@ -131,7 +132,7 @@ class PayrollPdfTests(unittest.TestCase):
         self.assertEqual(len(note_fragments), 2)
         self.assertEqual(name_fragment.fontSize, 7)
         for fragment in note_fragments:
-            self.assertEqual(fragment.fontSize, 15)
+            self.assertEqual(fragment.fontSize, 7)
 
     def test_no_notes_and_empty_payroll_do_not_add_observation_section(self):
         for rows in ([self.row(notes=None)], []):

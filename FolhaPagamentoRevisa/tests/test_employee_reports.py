@@ -207,7 +207,7 @@ class EmployeeReportTests(unittest.TestCase):
         self.assertLessEqual(sum(short_table._argW),155*APP.mm)
         self.assertGreater(long_table._argW[2],short_table._argW[2])
         self.assertLessEqual(long_table._argW[2],80*APP.mm)
-        self.assertEqual(short_table.hAlign,"CENTER")
+        self.assertEqual(short_table.hAlign,"LEFT")
         self.assertEqual(short_table._cellStyles[1][0].topPadding,2)
         self.assertEqual(short_table._cellStyles[1][0].bottomPadding,2)
 

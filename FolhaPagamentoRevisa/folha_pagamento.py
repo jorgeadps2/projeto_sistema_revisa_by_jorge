@@ -21,6 +21,7 @@ from reportlab.lib.styles import ParagraphStyle as _ParagraphStyle
 from reportlab.platypus import TableStyle as _TableStyle
 
 REPORT_FONT_SCALE = 0.85
+REPORT_COMPANY = 'FTS Distribuidora de Peças Ltda'
 
 
 class NumberedReportCanvas(Canvas):
@@ -49,7 +50,7 @@ class NumberedReportCanvas(Canvas):
 
 
 def _scaled_font(size):
-    return round(max(size * REPORT_FONT_SCALE, min(size, 7)), 2)
+    return round(max(size * REPORT_FONT_SCALE, 7), 2)
 
 
 def ParagraphStyle(name, parent=None, **kwargs):
@@ -60,11 +61,36 @@ def ParagraphStyle(name, parent=None, **kwargs):
             kwargs['leading'] = round(kwargs['leading'] * kwargs['fontSize'] / old, 2)
     elif 'leading' in kwargs:
         kwargs['leading'] = round(kwargs['leading'] * REPORT_FONT_SCALE, 2)
+    kwargs['textColor']=colors.black
+    if name.endswith('Title'):
+        kwargs.update(fontName='Helvetica-BoldOblique',fontSize=14,
+                      leading=17,alignment=0,spaceAfter=5)
+    elif 'Subtitle' in name:
+        kwargs.update(alignment=0,fontName='Helvetica-Oblique')
     return _ParagraphStyle(name, parent=parent, **kwargs)
 
 
 def TableStyle(commands):
-    commands = [('FONTSIZE', c[1], c[2], _scaled_font(c[3])) if c[0] == 'FONTSIZE' else c for c in commands]
+    styled=[]
+    for command in commands:
+        kind,start,end,*args=command
+        if kind in ('BACKGROUND','ROWBACKGROUNDS','INNERGRID','LINEAFTER'):
+            continue
+        if kind=='TEXTCOLOR':
+            args=[colors.black]
+        elif kind=='FONTSIZE':
+            args=[_scaled_font(args[0])]
+        elif kind=='ALIGN' and start[0]>=1 and args==['CENTER']:
+            args=['RIGHT']
+        elif kind in ('GRID','BOX'):
+            styled.extend([
+                ('LINEABOVE',(start[0],start[1]),(end[0],start[1]),0.5,colors.black),
+                ('LINEBELOW',(start[0],end[1]),(end[0],end[1]),0.5,colors.black)])
+            if kind=='GRID':
+                styled.append(('LINEBELOW',(start[0],start[1]),(end[0],start[1]),0.5,colors.black))
+            continue
+        styled.append((kind,start,end,*args))
+    commands=styled
     if not any(c[0] == 'FONTSIZE' for c in commands):
         commands.insert(0, ('FONTSIZE', (0, 0), (-1, -1), 7.5))
     return _TableStyle(commands)
@@ -230,16 +256,16 @@ def signing_expiry_warning(warn_days=30,include_ok=False):
 
 
 def sign_pdf_file(path):
-    """Assina o PDF com o certificado digital, com carimbo visível na última página."""
+    """Assina o PDF inteiro, com carimbo visível em todas as páginas."""
     pfx=signing_pfx_path()
     if pfx is None:
         return False
     from pyhanko.sign import signers, fields
     from pyhanko.stamp import TextStampStyle
     from pyhanko.pdf_utils.images import PdfImage
-    from pyhanko.pdf_utils.layout import SimpleBoxLayoutRule, AxisAlignment, Margins, InnerScaling
+    from pyhanko.pdf_utils.layout import SimpleBoxLayoutRule, AxisAlignment, Margins, InnerScaling, BoxConstraints
     from pyhanko.pdf_utils.incremental_writer import IncrementalPdfFileWriter
-    from pyhanko.pdf_utils.reader import PdfFileReader
+    from pypdf import PdfReader
     signer=None
     for attempt in range(3):
         password=_SIGN_PASSWORD['value']
@@ -264,14 +290,18 @@ def sign_pdf_file(path):
         return False
     signed_path=path+'.assinado'
     with open(path,'rb') as source:
-        reader=PdfFileReader(source)
-        media=reader.root['/Pages']['/Kids'][0].get_object()['/MediaBox']
-        page_width=float(media[2])
+        reader=PdfReader(source)
+        boxes=[]
+        for page in reader.pages:
+            crop=page.cropbox
+            boxes.append((float(crop.right)-254,float(crop.bottom)+10,
+                          float(crop.right)-34,float(crop.bottom)+50))
+        source.seek(0)
         writer=IncrementalPdfFileWriter(source)
         metadata=signers.PdfSignatureMetadata(field_name='AssinaturaRevisa')
         field=fields.SigFieldSpec(
             'AssinaturaRevisa',on_page=-1,
-            box=(page_width-254,10,page_width-34,50))
+            box=boxes[-1])
         style=TextStampStyle(
             stamp_text='Assinado digitalmente\n%(signer)s\n%(ts)s',border_width=0.5,
             background=PdfImage(resource_path('assinatura_logo.png')),
@@ -283,9 +313,18 @@ def sign_pdf_file(path):
             inner_content_layout=SimpleBoxLayoutRule(
                 x_align=AxisAlignment.ALIGN_MAX,y_align=AxisAlignment.ALIGN_MID,
                 margins=Margins(left=60,right=4,top=3,bottom=3)))
+        subject=signer.signing_cert.subject
+        stamp_params={
+            'signer':subject.native.get('common_name') or subject.human_friendly,
+            'ts':datetime.now().astimezone().strftime(style.timestamp_format),
+        }
+        for page_index,(left,bottom,right,top) in enumerate(boxes[:-1]):
+            stamp=style.create_stamp(
+                writer,BoxConstraints(width=right-left,height=top-bottom),stamp_params)
+            stamp.apply(page_index,left,bottom)
         pdf_signer=signers.PdfSigner(metadata,signer=signer,stamp_style=style,new_field_spec=field)
         with open(signed_path,'wb') as output:
-            pdf_signer.sign_pdf(writer,output=output)
+            pdf_signer.sign_pdf(writer,output=output,appearance_text_params=stamp_params)
     os.replace(signed_path,path)
     return True
 
@@ -339,6 +378,8 @@ def resource_path(name):
 
 
 def set_window_icon(window):
+    if isinstance(window,tk.Frame):
+        return
     try:
         window.iconbitmap(resource_path('folha_pagamento.ico'))
     except tk.TclError:
@@ -1206,6 +1247,14 @@ class FolhaBase:
         st.configure('CardValue.TLabel',font=('Segoe UI Semibold',21),foreground=NAVY,background=WHITE)
         st.configure('PageHeading.TLabel',font=('Segoe UI Semibold',14),foreground=NAVY,background=BG)
         self._apply_dark_theme(st)
+        if getattr(self,'compact_layout',False):
+            st.configure('Title.TLabel',font=('Segoe UI Semibold',16))
+            st.configure('PageHeading.TLabel',font=('Segoe UI Semibold',12))
+            st.configure('CardValue.TLabel',font=('Segoe UI Semibold',17))
+            st.configure('Treeview',rowheight=24)
+            st.configure('Treeview.Heading',padding=4)
+            for name in ('Toolbar.TButton','ToolbarSelected.TButton'):
+                st.configure(name,padding=(6,3))
 
     def _apply_dark_theme(self,st):
         # Estrutura escura; tabelas, campos e cartões continuam claros para leitura dos dados.
@@ -1260,6 +1309,7 @@ class FolhaBase:
 
     def _build(self):
         toolbar=ttk.Frame(self,style='Toolbar.TFrame',padding=(8,6))
+        self.navigation_toolbar=toolbar
         toolbar.pack(fill='x')
         self.navigation_buttons={}
         navigation=[
@@ -1301,8 +1351,10 @@ class FolhaBase:
             self.update_signing_expiry_notice()
         tk.Frame(self,bg=DARK_BORDER,height=1).pack(fill='x')
         content=ttk.Frame(self,padding=(8,6))
+        self.main_content=content
         content.pack(fill='both',expand=True)
         titlebar=ttk.Frame(content)
+        self.titlebar=titlebar
         titlebar.pack(fill='x',pady=(0,8))
         logo_card=tk.Frame(
             titlebar,bg=WHITE,highlightbackground='#dbe3ee',
@@ -1311,7 +1363,12 @@ class FolhaBase:
             logo_source.thumbnail((96,52),Image.Resampling.LANCZOS)
             self.dashboard_logo_image=ImageTk.PhotoImage(
                 logo_source.copy(),master=self)
-        tk.Label(logo_card,image=self.dashboard_logo_image,bg=WHITE).pack()
+        self.dashboard_logo_label=tk.Label(logo_card,image=self.dashboard_logo_image,bg=WHITE)
+        self.dashboard_logo_label.pack()
+        with Image.open(resource_path('logo_revisa.png')) as logo_source:
+            logo_source.thumbnail((64,34),Image.Resampling.LANCZOS)
+            self.compact_dashboard_logo_image=ImageTk.PhotoImage(
+                logo_source.copy(),master=self)
         self.dashboard_logo_card=logo_card
         self.dashboard_logo_card.pack(side='left',padx=(0,12))
         self.page_title=ttk.Label(titlebar,text='Painel de controle',style='Title.TLabel')
@@ -1320,6 +1377,12 @@ class FolhaBase:
         scroll_host.pack(fill='both',expand=True)
         self.scroll_host=scroll_host
         self.page_host=scroll_host.inner
+        if getattr(self,'centralized_actions',False):
+            from revisa_integrado.ui.action_layout import InlineForms
+            self.inline_forms=InlineForms(
+                self.page_host,
+                lambda:self.current_page.pack_forget(),
+                lambda:self.current_page.pack(fill='both',expand=True))
         self.dashboard_tab=ttk.Frame(self.page_host,padding=14)
         self.payroll_tab=ttk.Frame(self.page_host,padding=12)
         self.employees_tab=ttk.Frame(self.page_host,padding=12)
@@ -1343,6 +1406,8 @@ class FolhaBase:
                 return
 
     def navigate(self,section):
+        if hasattr(self,'inline_forms'):
+            self.inline_forms.close_all()
         pages={
             'dashboard':(self.dashboard_tab,'Painel de controle'),
             'payroll':(self.payroll_tab,'Folha mensal'),
@@ -1412,11 +1477,13 @@ class FolhaBase:
     def _build_dashboard(self):
         wrap=self.dashboard_tab
         topbar=ttk.Frame(wrap)
+        self.dashboard_topbar=topbar
         topbar.pack(fill='x',pady=(0,10))
         ttk.Label(topbar,text='Visão geral da folha',style='PageHeading.TLabel').pack(side='left')
         self.dashboard_period=ttk.Label(topbar,text='',style='Sub.TLabel')
         self.dashboard_period.pack(side='right',padx=(8,0))
         quick=ttk.Frame(wrap)
+        self.dashboard_quick_actions=quick
         quick.pack(fill='x',pady=(0,12))
         ttk.Button(quick,text='Abrir folha mensal',style='Accent.TButton',command=lambda:self.navigate('payroll')).pack(side='left',padx=(0,8))
         ttk.Button(quick,text='Colaboradores',style='Secondary.TButton',command=lambda:self.navigate('employees')).pack(side='left',padx=(0,8))
@@ -1425,6 +1492,7 @@ class FolhaBase:
         self.card_values=[]
         self.card_titles=[]
         self.card_hints=[]
+        self.card_icons=[]
         card_data=[
             ('♙','Colaboradores ativos'),
             ('R$','Total líquido da competência'),
@@ -1436,10 +1504,12 @@ class FolhaBase:
             f.pack(side='left',fill='both',expand=True,padx=(0,10 if index<len(card_data)-1 else 0))
             accent=BLUE if index in (0,1) else GREEN
             tk.Frame(f,bg=accent,height=3).pack(fill='x')
-            tk.Label(
+            icon_label=tk.Label(
                 f,text=icon,bg='#eff6ff' if index in (0,1) else '#ecfdf5',
                 fg=accent,font=('Segoe UI Semibold',11),width=4
-            ).pack(anchor='w',padx=12,pady=(9,4))
+            )
+            icon_label.pack(anchor='w',padx=12,pady=(9,4))
+            self.card_icons.append(icon_label)
             title_label=tk.Label(f,text=title,bg=WHITE,fg=MUTED,font=('Segoe UI Semibold',9))
             title_label.pack(anchor='w',padx=14,pady=(0,1))
             v=ttk.Label(f,text='—',style='CardValue.TLabel')
@@ -1450,6 +1520,7 @@ class FolhaBase:
             self.card_values.append(v)
             self.card_hints.append(hint)
         summary=ttk.Frame(wrap); summary.pack(fill='x',pady=(0,14))
+        self.dashboard_summary=summary
         closed_card=tk.Frame(summary,bg=WHITE,highlightbackground='#dbe3ee',highlightthickness=1)
         closed_card.pack(side='left',fill='y',padx=(0,12))
         tk.Frame(closed_card,bg=GREEN,height=3).pack(fill='x')
@@ -1506,6 +1577,16 @@ class FolhaBase:
 
     def _tab_action_layout(self,parent):
         parent.configure(padding=(8,0,8,8))
+        if getattr(self,'centralized_actions',False):
+            actions=ttk.Frame(parent,padding=(0,4))
+            actions._action_title={
+                self.payroll_tab:'Folha mensal',self.employees_tab:'Colaboradores',
+                self.salaries_tab:'Salários',self.loans_tab:'Proventos / Descontos'
+            }.get(parent,'Ações')
+            actions.pack(side='top',fill='x')
+            content=ttk.Frame(parent)
+            content.pack(fill='both',expand=True)
+            return actions,content
         actions=ttk.Frame(parent,width=184,padding=(0,0,8,0))
         actions.pack(side='left',fill='y',anchor='n')
         actions.pack_propagate(False)
@@ -1514,6 +1595,8 @@ class FolhaBase:
         return actions,content
 
     def _align_tab_actions(self,actions,table):
+        if getattr(self,'centralized_actions',False):
+            return
         spacer=ttk.Frame(actions,height=0)
         children=actions.pack_slaves()
         if children:
@@ -1530,14 +1613,53 @@ class FolhaBase:
         table.bind('<Map>',align,add='+')
 
     def _tab_reports(self,parent,entries,style='Report.TButton'):
-        group=ttk.LabelFrame(parent,text='Relatórios',padding=(4,6))
-        group.pack(side='bottom',fill='x',pady=(14,6))
+        if getattr(self,'centralized_actions',False):
+            group=ttk.Frame(parent)
+            group._action_title='Relatórios'
+            group.pack(side='left',padx=(6,0))
+        else:
+            group=ttk.LabelFrame(parent,text='Relatórios',padding=(4,6))
+            group.pack(side='bottom',fill='x',pady=(14,6))
         for label,command in entries:
             ttk.Button(
                 group,text=label,style=style,
                 command=command).pack(fill='x',pady=(0,4))
         self._add_tab_action_icons(group)
         return group
+
+    def _form_window(self,parent):
+        if hasattr(self,'inline_forms'):
+            form=self.inline_forms.open()
+            self.scroll_host.after_idle(self.scroll_host._layout)
+            return form
+        return tk.Toplevel(parent)
+
+    def _report_window(self):
+        window=tk.Toplevel(self)
+        if getattr(self,'centralized_actions',False):
+            window.configure(bg=BG)
+            window.transient(self.winfo_toplevel())
+            window.resizable(False,False)
+            def center():
+                if not window.winfo_exists():
+                    return
+                window.update_idletasks()
+                owner=self.winfo_toplevel()
+                width=window.winfo_reqwidth()
+                height=window.winfo_reqheight()
+                x=max(0,min(window.winfo_screenwidth()-width,
+                    owner.winfo_rootx()+(owner.winfo_width()-width)//2))
+                y=max(0,min(window.winfo_screenheight()-height,
+                    owner.winfo_rooty()+(owner.winfo_height()-height)//2))
+                window.geometry(f'{width}x{height}+{x}+{y}')
+            window.after_idle(center)
+        return window
+
+    def _configure_form(self,form,option,*args):
+        if isinstance(form,tk.Toplevel):
+            return getattr(form,option)(*args)
+        from revisa_integrado.ui.action_layout import configure_form
+        return configure_form(form,option,*args)
 
     def _add_tab_action_icons(self,actions):
         for button in actions.winfo_children():
@@ -1651,6 +1773,10 @@ class FolhaBase:
             button.action_icon=ImageTk.PhotoImage(
                 image.resize((18,18),Image.Resampling.LANCZOS),master=button)
             button.configure(image=button.action_icon,compound='left')
+        if getattr(self,'centralized_actions',False) and actions.cget('style')!='Toolbar.TFrame':
+            from revisa_integrado.ui.action_layout import group_actions
+            label='Relatórios' if isinstance(actions,ttk.LabelFrame) else getattr(actions,'_action_title','Ações')
+            group_actions(actions,label)
 
     def _build_payroll(self):
         actions,content=self._tab_action_layout(self.payroll_tab)
@@ -1995,7 +2121,7 @@ class FolhaBase:
             return self.inactive_emp_tree
         return self.emp_tree
 
-    def autosize_treeview_columns(self,tree,min_width=70,max_width=420,padding=24,bold=False):
+    def autosize_treeview_columns(self,tree,min_width=70,max_width=420,padding=24,bold=False,full_text_columns=()):
         style=ttk.Style(tree)
         heading_font=tkfont.Font(font=style.lookup('Treeview.Heading','font'))
         cell_font=tkfont.Font(font=style.lookup('Treeview','font'))
@@ -2007,10 +2133,10 @@ class FolhaBase:
             for item in tree.get_children(''):
                 value=tree.set(item,column)
                 width=max(width,cell_font.measure(str(value))+padding)
-                if width>=max_width:
+                if column not in full_text_columns and width>=max_width:
                     width=max_width
                     break
-            tree.column(column,width=min(max_width,width),stretch=False)
+            tree.column(column,width=width if column in full_text_columns else min(max_width,width),stretch=False)
 
     def sync_all_loans(self):
         with connect() as con:
@@ -2340,7 +2466,7 @@ class FolhaBase:
             self.salary_tree.insert(
                 '','end',iid=str(employee['id']),values=tuple(values))
         self.salary_tree.configure(height=max(8,min(len(employees),22)))
-        self.autosize_treeview_columns(self.salary_tree,max_width=220)
+        self.autosize_treeview_columns(self.salary_tree,max_width=220,full_text_columns=('name',))
         self.refresh_salary_observations()
 
     def delete_salary_adjustment_column(self):
@@ -2348,12 +2474,12 @@ class FolhaBase:
         if not dates:
             messagebox.showinfo('Sem reajustes','Não há colunas de reajuste para excluir.',parent=self)
             return
-        dialog=tk.Toplevel(self)
-        dialog.title('Excluir coluna de reajuste')
+        dialog=self._form_window(self)
+        self._configure_form(dialog, 'title', 'Excluir coluna de reajuste')
         dialog.configure(bg=BG)
-        dialog.transient(self)
-        dialog.grab_set()
-        dialog.resizable(False,False)
+        self._configure_form(dialog, 'transient', self)
+        self._configure_form(dialog, 'grab_set')
+        self._configure_form(dialog, 'resizable', False, False)
         body=ttk.Frame(dialog,padding=20)
         body.pack(fill='both',expand=True)
         ttk.Label(body,text='Escolha a coluna de reajuste a excluir:').pack(anchor='w')
@@ -2528,12 +2654,12 @@ class FolhaBase:
         employee_id=int(selection[0])
         employee=self.salary_tree.item(selection[0],'values')
         initial_previous_salary=employee[2]
-        dialog=tk.Toplevel(self)
-        dialog.title('Salário anterior')
+        dialog=self._form_window(self)
+        self._configure_form(dialog, 'title', 'Salário anterior')
         dialog.configure(bg=BG)
-        dialog.transient(self)
-        dialog.grab_set()
-        dialog.resizable(False,False)
+        self._configure_form(dialog, 'transient', self)
+        self._configure_form(dialog, 'grab_set')
+        self._configure_form(dialog, 'resizable', False, False)
         body=ttk.Frame(dialog,padding=20)
         body.pack(fill='both',expand=True)
         ttk.Label(
@@ -2672,11 +2798,11 @@ class FolhaBase:
             messagebox.showerror('Não foi possível ler o PDF',str(ex),parent=self)
             return
         by_employee={item['employee_id']:item for item in items}
-        form=tk.Toplevel(self)
-        form.title(f'Conferir importação — {MONTHS[month-1]}/{year}')
-        form.transient(self)
-        form.grab_set()
-        form.geometry('900x550')
+        form=self._form_window(self)
+        self._configure_form(form, 'title', f'Conferir importação — {MONTHS[month-1]}/{year}')
+        self._configure_form(form, 'transient', self)
+        self._configure_form(form, 'grab_set')
+        self._configure_form(form, 'geometry', '900x550')
         body=ttk.Frame(form,padding=16)
         body.pack(fill='both',expand=True)
         ttk.Label(body,text='Todos estão incluídos. Clique na coluna Importar para deixar alguém de fora.',
@@ -2922,12 +3048,12 @@ class FolhaBase:
                 'Sem colaboradores ativos','Cadastre ou ative colaboradores antes de lançar o lote.',
                 parent=self)
             return
-        form=tk.Toplevel(self)
-        form.title(f'{label} em lote')
+        form=self._form_window(self)
+        self._configure_form(form, 'title', f'{label} em lote')
         form.configure(bg=BG)
-        form.transient(self)
-        form.grab_set()
-        form.geometry(f'{min(820,self.winfo_screenwidth()-80)}x{min(650,self.winfo_screenheight()-100)}')
+        self._configure_form(form, 'transient', self)
+        self._configure_form(form, 'grab_set')
+        self._configure_form(form, 'geometry', f'{min(820,self.winfo_screenwidth()-80)}x{min(650,self.winfo_screenheight()-100)}')
         fields=ttk.Frame(form,padding=18)
         fields.pack(fill='both',expand=True)
         ttk.Label(fields,text=f'{label} em lote',font=('Segoe UI Semibold',15)).pack(anchor='w')
@@ -3218,7 +3344,10 @@ class FolhaBase:
         meta_page=ttk.Frame(self.loan_notebook)
         self.loan_notebook.add(meta_page,text='Meta')
         loan_actions=ttk.Frame(actions)
-        loan_actions.pack(fill='both',expand=True)
+        if getattr(self,'centralized_actions',False):
+            loan_actions.pack(side='left')
+        else:
+            loan_actions.pack(fill='both',expand=True)
         meta_actions=ttk.Frame(actions)
         self._build_meta(meta_page,meta_actions)
         loan_report_groups={}
@@ -3229,16 +3358,25 @@ class FolhaBase:
             is_meta=selected_tab==2
             if is_meta:
                 loan_actions.pack_forget()
-                meta_actions.pack(fill='both',expand=True)
+                if getattr(self,'centralized_actions',False):
+                    meta_actions.pack(side='left',before=all_reports)
+                else:
+                    meta_actions.pack(fill='both',expand=True)
                 self.loan_period_label.configure(text='Meta: consulte os lançamentos pelo período e colaborador abaixo.')
             else:
                 meta_actions.pack_forget()
-                loan_actions.pack(fill='both',expand=True)
+                if getattr(self,'centralized_actions',False):
+                    loan_actions.pack(side='left',before=all_reports)
+                else:
+                    loan_actions.pack(fill='both',expand=True)
                 for report_group in loan_report_groups.values():
                     report_group.pack_forget()
                 report_group=loan_report_groups.get(selected_tab)
                 if report_group is not None:
-                    report_group.pack(side='bottom',fill='x',pady=(14,6))
+                    if getattr(self,'centralized_actions',False):
+                        report_group.pack(side='left',padx=(6,0))
+                    else:
+                        report_group.pack(side='bottom',fill='x',pady=(14,6))
                 tree=self.loan_trees[('advances','loans')[selected_tab]]
                 self.loans_tree=tree
                 self.loan_period_label.configure(
@@ -3323,8 +3461,7 @@ class FolhaBase:
                         target=self.loan_trees['loans']
                         target.insert('','end',iid=str(loan['id']),values=(loan['name'],loan['kind'],brl(loan['principal']),brl(remaining),count,brl(monthly),f'{MONTHS[start_month-1]}/{start_year}',progress,loan['notes'] or ''))
             for loan_tree in self.loan_trees.values():
-                self.autosize_treeview_columns(loan_tree,max_width=180)
-                loan_tree.column('notes',stretch=True)
+                self.autosize_treeview_columns(loan_tree,max_width=420,full_text_columns=('employee',))
             self.refresh_meta()
 
         self.advance_filter.bind('<<ComboboxSelected>>',lambda event:refresh())
@@ -3415,7 +3552,7 @@ class FolhaBase:
             with connect() as con:
                 loan=con.execute('SELECT l.*,e.name FROM employee_loans l JOIN employees e ON e.id=l.employee_id WHERE l.id=?',(loan_id,)).fetchone()
             settled=loan['settled_year'] is not None
-            form=tk.Toplevel(win);form.title('Editar lançamento');form.configure(bg=BG);form.transient(win);form.grab_set();form.resizable(False,False)
+            form=self._form_window(win);self._configure_form(form, 'title', 'Editar lançamento');form.configure(bg=BG);self._configure_form(form, 'transient', win);self._configure_form(form, 'grab_set');self._configure_form(form, 'resizable', False, False)
             fields=ttk.Frame(form,padding=20);fields.pack(fill='both',expand=True)
             ttk.Label(fields,text=f'Editar {loan["kind"].lower()} - {loan["name"]}',font=('Segoe UI Semibold',15)).grid(row=0,column=0,columnspan=2,sticky='w',pady=(0,8))
             hint=('Contrato quitado. Somente as observações podem ser alteradas.' if settled else
@@ -3490,7 +3627,7 @@ class FolhaBase:
             if not employees:
                 messagebox.showwarning('Sem colaboradores ativos','Cadastre ou ative um colaborador antes de registrar um empréstimo.',parent=win)
                 return
-            form=tk.Toplevel(win);form.title(f'Cadastrar {kind.lower()}');form.configure(bg=BG);form.transient(win);form.grab_set();form.resizable(False,False)
+            form=self._form_window(win);self._configure_form(form, 'title', f'Cadastrar {kind.lower()}');form.configure(bg=BG);self._configure_form(form, 'transient', win);self._configure_form(form, 'grab_set');self._configure_form(form, 'resizable', False, False)
             fields=ttk.Frame(form,padding=18);fields.pack(fill='both',expand=True)
             ttk.Label(fields,text='Novo lançamento',font=('Segoe UI Semibold',15)).grid(row=0,column=0,columnspan=2,sticky='w',pady=(0,10))
             employee_var=tk.StringVar(value=employees[0]['name'])
@@ -3599,10 +3736,16 @@ class FolhaBase:
             menu=self.loan_actions_menu).pack(fill='x',pady=(0,6))
         self.refresh_loans=refresh
         self._add_tab_action_icons(loan_actions)
-        loan_report_groups[0]=self._tab_reports(loan_actions,[
-            ('Adiantamentos (PDF)',lambda:self.generate_advance_report_dialog(ADVANCE_KIND))])
-        loan_report_groups[1]=self._tab_reports(loan_actions,[
-            ('Emprestimo (PDF)',lambda:self.generate_advance_report_dialog(LOAN_KIND))])
+        if getattr(self,'centralized_actions',False):
+            all_reports=self._tab_reports(actions,[
+                ('Adiantamentos (PDF)',lambda:self.generate_advance_report_dialog(ADVANCE_KIND)),
+                ('Emprestimo (PDF)',lambda:self.generate_advance_report_dialog(LOAN_KIND)),
+                ('Meta (PDF)',self.generate_meta_report)])
+        else:
+            loan_report_groups[0]=self._tab_reports(loan_actions,[
+                ('Adiantamentos (PDF)',lambda:self.generate_advance_report_dialog(ADVANCE_KIND))])
+            loan_report_groups[1]=self._tab_reports(loan_actions,[
+                ('Emprestimo (PDF)',lambda:self.generate_advance_report_dialog(LOAN_KIND))])
         select_tab()
 
     def _build_meta(self,parent,actions):
@@ -3658,7 +3801,8 @@ class FolhaBase:
             actions,text='Cadastrar / ações',style='Orange.TMenubutton',
             menu=self.meta_actions_menu).pack(fill='x',pady=(0,6))
         self._add_tab_action_icons(actions)
-        self._tab_reports(actions,[('Meta (PDF)',self.generate_meta_report)])
+        if not getattr(self,'centralized_actions',False):
+            self._tab_reports(actions,[('Meta (PDF)',self.generate_meta_report)])
 
     def meta_filter_values(self):
         start,end=meta_month_date_range(
@@ -3702,8 +3846,7 @@ class FolhaBase:
         for row in rows:
             self.meta_tree.insert('','end',iid=str(row['id']),values=(
                 row['name'],employee_date_for_form(row['entry_date']),brl(row['amount']),row['notes']))
-        self.autosize_treeview_columns(self.meta_tree,max_width=180)
-        self.meta_tree.column('notes',stretch=True)
+        self.autosize_treeview_columns(self.meta_tree,max_width=420,full_text_columns=('employee',))
         self.meta_summary.configure(
             text=f'{len(rows)} lançamento(s) • Total: {brl(sum(row["amount"] for row in rows))} • Não integra a folha.')
 
@@ -3752,12 +3895,12 @@ class FolhaBase:
         if not employees:
             messagebox.showwarning('Sem colaboradores ativos','Cadastre ou ative colaboradores antes de lançar a Meta.',parent=self)
             return
-        form=tk.Toplevel(self)
-        form.title('Meta em lote')
+        form=self._form_window(self)
+        self._configure_form(form, 'title', 'Meta em lote')
         form.configure(bg=BG)
-        form.transient(self)
-        form.grab_set()
-        form.geometry(f'{min(700,self.winfo_screenwidth()-80)}x{min(650,self.winfo_screenheight()-100)}')
+        self._configure_form(form, 'transient', self)
+        self._configure_form(form, 'grab_set')
+        self._configure_form(form, 'geometry', f'{min(700,self.winfo_screenwidth()-80)}x{min(650,self.winfo_screenheight()-100)}')
         fields=ttk.Frame(form,padding=18)
         fields.pack(fill='both',expand=True)
         ttk.Label(fields,text='Meta em lote',font=('Segoe UI Semibold',15)).pack(anchor='w')
@@ -3870,11 +4013,11 @@ class FolhaBase:
         if not employees and not inactive_history:
             messagebox.showwarning('Sem colaboradores ativos','Cadastre ou ative um colaborador antes de lançar a Meta.',parent=self)
             return
-        form=tk.Toplevel(self)
-        form.title('Editar Meta' if entry else 'Cadastrar Meta')
+        form=self._form_window(self)
+        self._configure_form(form, 'title', 'Editar Meta' if entry else 'Cadastrar Meta')
         form.configure(bg=BG)
-        form.transient(self)
-        form.grab_set()
+        self._configure_form(form, 'transient', self)
+        self._configure_form(form, 'grab_set')
         fields=ttk.Frame(form,padding=18)
         fields.pack(fill='both',expand=True)
         fields.columnconfigure(1,weight=1)
@@ -3954,7 +4097,7 @@ class FolhaBase:
         usable_width=page_size[0]-24*mm-12
         document=SimpleDocTemplate(
             path,pagesize=page_size,leftMargin=12*mm,rightMargin=12*mm,
-            topMargin=24*mm,bottomMargin=18*mm,title='Relatório de Meta',author=AUTHOR)
+            topMargin=24*mm,bottomMargin=18*mm,title='Relatório de Meta',author=REPORT_COMPANY)
         story=[
             Paragraph('Relatório de Meta',title),
             Paragraph(f'Período: {employee_date_for_form(normalize_employee_date(start))} a '
@@ -4081,12 +4224,12 @@ class FolhaBase:
                 'Sem colaboradores ativos','Cadastre ou ative colaboradores antes de lançar adiantamentos.',parent=self)
             return
         year,month=period
-        form=tk.Toplevel(self)
-        form.title('Adiantamentos salariais em lote')
+        form=self._form_window(self)
+        self._configure_form(form, 'title', 'Adiantamentos salariais em lote')
         form.configure(bg=BG)
-        form.transient(self)
-        form.grab_set()
-        form.geometry(f'{min(780,self.winfo_screenwidth()-80)}x{min(650,self.winfo_screenheight()-100)}')
+        self._configure_form(form, 'transient', self)
+        self._configure_form(form, 'grab_set')
+        self._configure_form(form, 'geometry', f'{min(780,self.winfo_screenwidth()-80)}x{min(650,self.winfo_screenheight()-100)}')
         fields=ttk.Frame(form,padding=18)
         fields.pack(fill='both',expand=True)
         ttk.Label(fields,text='Adiantamentos salariais em lote',font=('Segoe UI Semibold',15)).pack(anchor='w')
@@ -4175,12 +4318,12 @@ class FolhaBase:
             selected_year=datetime.now().year
             selected_month=datetime.now().month
 
-        form=tk.Toplevel(self)
-        form.title('Cadastrar empréstimo parcelado')
+        form=self._form_window(self)
+        self._configure_form(form, 'title', 'Cadastrar empréstimo parcelado')
         form.configure(bg=BG)
-        form.transient(self)
-        form.grab_set()
-        form.resizable(False,False)
+        self._configure_form(form, 'transient', self)
+        self._configure_form(form, 'grab_set')
+        self._configure_form(form, 'resizable', False, False)
         fields=ttk.Frame(form,padding=22)
         fields.pack(fill='both',expand=True)
         ttk.Label(fields,text='Cadastrar empréstimo parcelado',font=('Segoe UI Semibold',16)).grid(row=0,column=0,columnspan=2,sticky='w',pady=(0,8))
@@ -4260,7 +4403,7 @@ class FolhaBase:
         ttk.Button(buttons,text='Cancelar',command=form.destroy).pack(side='right',padx=(8,0))
         ttk.Button(buttons,text='Salvar empréstimo',style='Accent.TButton',command=save_loan).pack(side='right')
         form.update_idletasks()
-        form.geometry(f'+{self.winfo_rootx()+100}+{self.winfo_rooty()+80}')
+        self._configure_form(form, 'geometry', f'+{self.winfo_rootx()+100}+{self.winfo_rooty()+80}')
 
     def selected_item(self):
         sel=self.pay_tree.selection()
@@ -4288,7 +4431,7 @@ class FolhaBase:
                 available=[e for e in employees if e['id'] not in existing]
                 default_choice=next((e for e in available if e['name']==default_employee),available[0] if available else None)
                 default_salary=employee_salary_for_period(con,default_choice['id'],year,month) if default_choice else 0
-        win=tk.Toplevel(self);win.title('Editar lançamento' if item else 'Incluir colaborador na folha');win.configure(bg=BG);win.transient(self);win.grab_set();win.resizable(True,True)
+        win=self._form_window(self);self._configure_form(win, 'title', 'Editar lançamento' if item else 'Incluir colaborador na folha');win.configure(bg=BG);self._configure_form(win, 'transient', self);self._configure_form(win, 'grab_set');self._configure_form(win, 'resizable', True, True)
         body=ttk.Frame(win,padding=20);body.pack(fill='both',expand=True)
         body.columnconfigure(1,weight=1);body.columnconfigure(3,weight=1)
         ttk.Label(body,text='Dados do lançamento',font=('Segoe UI Semibold',15)).grid(row=0,column=0,columnspan=4,sticky='w',pady=(0,12))
@@ -4411,7 +4554,7 @@ class FolhaBase:
             win.destroy();self.load_payroll();self.load_dashboard()
         buttons=ttk.Frame(body);buttons.grid(row=rr+3,column=0,columnspan=4,sticky='e',pady=(8,0))
         ttk.Button(buttons,text='Cancelar',command=win.destroy).pack(side='right',padx=(8,0));ttk.Button(buttons,text='Salvar lançamento',style='Accent.TButton',command=save).pack(side='right')
-        win.update_idletasks();win.geometry(f'+{self.winfo_rootx()+120}+{self.winfo_rooty()+90}')
+        win.update_idletasks();self._configure_form(win, 'geometry', f'+{self.winfo_rootx()+120}+{self.winfo_rooty()+90}')
 
     def add_item_dialog(self): self.item_dialog()
     def edit_selected_item(self):
@@ -4507,13 +4650,13 @@ class FolhaBase:
             self.load_employees()
             return
 
-        win=tk.Toplevel(self)
-        win.title(f'Salário e reajustes — {employee["name"]}')
+        win=self._form_window(self)
+        self._configure_form(win, 'title', f'Salário e reajustes — {employee["name"]}')
         win.configure(bg=BG)
-        win.transient(self)
-        win.grab_set()
-        win.geometry('640x520')
-        win.minsize(600,480)
+        self._configure_form(win, 'transient', self)
+        self._configure_form(win, 'grab_set')
+        self._configure_form(win, 'geometry', '640x520')
+        self._configure_form(win, 'minsize', 600, 480)
         body=ttk.Frame(win,padding=18)
         body.pack(fill='both',expand=True)
         body.columnconfigure(0,weight=1)
@@ -4708,13 +4851,13 @@ class FolhaBase:
             messagebox.showerror('Colaborador não encontrado','Atualize a lista e selecione um colaborador válido.',parent=self)
             self.load_employees()
             return
-        win=tk.Toplevel(self)
-        win.title('Editar colaborador' if employee else 'Cadastrar colaborador')
+        win=self._form_window(self)
+        self._configure_form(win, 'title', 'Editar colaborador' if employee else 'Cadastrar colaborador')
         win.configure(bg=BG)
-        win.transient(self)
-        win.grab_set()
-        win.geometry('960x760')
-        win.minsize(800,600)
+        self._configure_form(win, 'transient', self)
+        self._configure_form(win, 'grab_set')
+        self._configure_form(win, 'geometry', '960x760')
+        self._configure_form(win, 'minsize', 800, 600)
         style=ttk.Style(win)
         style.configure(
             'EmployeeSection.TLabel',background=WHITE,foreground=NAVY,
@@ -4975,7 +5118,7 @@ class FolhaBase:
         messagebox.showinfo('Colaborador excluído',f'O cadastro de {employee["name"]} foi excluído.',parent=self)
 
     def new_year_dialog(self):
-        win=tk.Toplevel(self);win.title('Configurar novo ano — manual');win.configure(bg=BG);win.transient(self);win.grab_set();win.geometry('850x650');win.minsize(760,520)
+        win=self._form_window(self);self._configure_form(win, 'title', 'Configurar novo ano — manual');win.configure(bg=BG);self._configure_form(win, 'transient', self);self._configure_form(win, 'grab_set');self._configure_form(win, 'geometry', '850x650');self._configure_form(win, 'minsize', 760, 520)
         outer=ttk.Frame(win,padding=18);outer.pack(fill='both',expand=True)
         ttk.Label(outer,text='Configurar um novo ano',font=('Segoe UI Semibold',17)).pack(anchor='w')
         ttk.Label(outer,text='Marque somente os colaboradores que entrarão no ano e informe o salário-base de cada um. Os 12 meses serão criados sem lançar variáveis/descontos.',style='Sub.TLabel').pack(anchor='w',pady=(4,12))
@@ -5144,7 +5287,7 @@ class FolhaBase:
             messagebox.showerror('Não foi possível abrir a pasta de backups',str(ex),parent=self)
 
     def change_password_dialog(self):
-        win=tk.Toplevel(self);win.title('Alterar senha de acesso');win.configure(bg=BG);win.transient(self);win.grab_set();win.resizable(False,False)
+        win=self._form_window(self);self._configure_form(win, 'title', 'Alterar senha de acesso');win.configure(bg=BG);self._configure_form(win, 'transient', self);self._configure_form(win, 'grab_set');self._configure_form(win, 'resizable', False, False)
         set_window_icon(win)
         body=ttk.Frame(win,padding=24);body.pack(fill='both',expand=True)
         ttk.Label(body,text='Alterar senha',font=('Segoe UI Semibold',15)).grid(row=0,column=0,columnspan=2,sticky='w',pady=(0,4))
@@ -5187,7 +5330,7 @@ class FolhaBase:
         win.update_idletasks()
         x=self.winfo_rootx()+max(0,(self.winfo_width()-win.winfo_reqwidth())//2)
         y=self.winfo_rooty()+max(0,(self.winfo_height()-win.winfo_reqheight())//3)
-        win.geometry(f'+{x}+{y}')
+        self._configure_form(win, 'geometry', f'+{x}+{y}')
         entries[0].focus_set()
 
     def selected_payroll_period(self):
@@ -5226,9 +5369,8 @@ class FolhaBase:
         styles=getSampleStyleSheet()
         title_style=ParagraphStyle('PayrollTitle',parent=styles['Title'],fontName='Helvetica-Bold',fontSize=16,leading=20,textColor=colors.HexColor(NAVY),alignment=1,spaceAfter=4)
         subtitle_style=ParagraphStyle('PayrollSubtitle',parent=styles['Normal'],fontName='Helvetica',fontSize=9,textColor=colors.HexColor('#64748b'),alignment=1,spaceAfter=10)
-        legend_style=ParagraphStyle('PayrollLegend',parent=subtitle_style,alignment=0,leading=20,spaceAfter=6)
         employee_style=ParagraphStyle('PayrollEmployee',parent=styles['Normal'],fontName='Helvetica',fontSize=7,leading=8)
-        credit_color=colors.HexColor('#15803d')
+        credit_color=colors.HexColor('#145588')
         debit_color=colors.HexColor('#b91c1c')
         note_marker='<font color="#dc2626">&#8226;</font>'
         installment_style=ParagraphStyle('PayrollInstallment',parent=styles['Normal'],fontName='Helvetica',fontSize=6.5,leading=7,alignment=1,textColor=debit_color)
@@ -5239,21 +5381,24 @@ class FolhaBase:
         credit_summary_style=ParagraphStyle('PayrollCreditSummary',parent=summary_value_style,textColor=credit_color)
         debit_summary_style=ParagraphStyle('PayrollDebitSummary',parent=summary_value_style,textColor=debit_color)
         observation_name_font_size=7
-        observation_text_font_size=15
-        observation_style=ParagraphStyle('PayrollObservation',parent=employee_style,fontSize=9,leading=18,spaceAfter=8)
-        total_value_style=ParagraphStyle('PayrollTotalValue',parent=credit_summary_style,alignment=1)
+        observation_text_font_size=7
+        observation_style=ParagraphStyle('PayrollObservation',parent=employee_style,fontSize=7,leading=10,spaceAfter=6)
+        total_value_style=ParagraphStyle('PayrollTotalValue',parent=credit_summary_style,fontSize=12,leading=14,alignment=1)
+        installment_style.textColor=debit_color
+        credit_summary_style.textColor=credit_color
+        debit_summary_style.textColor=debit_color
+        credit_summary_style.alignment=1
+        debit_summary_style.alignment=1
+        summary_value_style.alignment=1
+        total_value_style.textColor=credit_color
         generated=datetime.now().strftime('%d/%m/%Y %H:%M')
         page_size=landscape(A4)
 
         def draw_page(canvas,document):
             self.pdf_page_header(canvas,page_size,generated,document.page)
 
-        document=SimpleDocTemplate(path,pagesize=page_size,rightMargin=12*mm,leftMargin=12*mm,topMargin=24*mm,bottomMargin=18*mm,title=f'Folha a pagar - {MONTHS[month-1]} {year}',author=AUTHOR)
+        document=SimpleDocTemplate(path,pagesize=page_size,rightMargin=12*mm,leftMargin=12*mm,topMargin=24*mm,bottomMargin=18*mm,title=f'Folha a pagar - {MONTHS[month-1]} {year}',author=REPORT_COMPANY)
         story=[
-            Paragraph(
-                '<font color="#15803d" size="20">&#8226;</font> Crédito'
-                ' &nbsp;&nbsp; <font color="#b91c1c" size="20">&#8226;</font> Débito',
-                legend_style),
             Paragraph(f'Folha a pagar - {MONTHS[month-1]} de {year}',title_style),
             Paragraph(f'Situação: {payroll["status"]} &nbsp;&nbsp; | &nbsp;&nbsp; Colaboradores: {len(rows)}',subtitle_style),
         ]
@@ -5281,7 +5426,7 @@ class FolhaBase:
             for key in totals:
                 totals[key]+=float(row[key] or 0)
         usable_width=page_size[0]-24*mm
-        name_width=43*mm
+        name_width=58*mm
         amount_width=(usable_width-name_width)/len(payroll_keys)
         payroll_table=LongTable(
             payroll_data,
@@ -5311,6 +5456,12 @@ class FolhaBase:
             ('BOTTOMPADDING',(0,0),(-1,-1),1.5),
         ]))
         gross=sum(totals[key] for key in ('salary','pf','overtime','vacation','meta','thirteenth'))
+        payroll_table.setStyle(_TableStyle([
+            ('TEXTCOLOR',(1,1),(len(earnings_keys),-1),credit_color),
+            ('TEXTCOLOR',(len(earnings_keys)+1,1),(-2,-1),debit_color),
+            ('TEXTCOLOR',(-1,1),(-1,-1),credit_color),
+            ('ALIGN',(1,1),(-1,-1),'CENTER'),
+        ]))
         deductions=sum(totals[key] for key in ('marmitex','advances','pharmacy','loan','other_deductions'))
         summary=Table([
             [Paragraph(f'Total de proventos: {brl(gross)}',credit_summary_style),
@@ -5370,25 +5521,22 @@ class FolhaBase:
 
     def pdf_page_header(self,canvas,page_size,generated,page=None,margin=12*mm):
         width,height=page_size
-        navy=colors.HexColor(NAVY)
         canvas.saveState()
-        canvas.drawImage(resource_path('logo_revisa.png'),margin,height-19*mm,width=36*mm,height=14*mm,preserveAspectRatio=True,anchor='sw',mask='auto')
-        canvas.setFillColor(navy)
+        canvas.drawImage(resource_path('logo_revisa.png'),margin,height-19*mm,width=23*mm,height=14*mm,preserveAspectRatio=True,anchor='sw',mask='auto')
+        canvas.setFillColor(colors.black)
         canvas.setFont('Helvetica-Bold',11)
-        canvas.drawString(margin+40*mm,height-11*mm,AUTHOR.upper())
-        canvas.setFont('Helvetica',8)
-        canvas.setFillColor(colors.HexColor('#64748b'))
-        canvas.drawString(margin+40*mm,height-15.5*mm,'Departamento Pessoal  |  Folha de Pagamento')
-        canvas.drawRightString(width-margin,height-11*mm,f'Impresso em {generated}')
-        canvas.setStrokeColor(navy)
-        canvas.setLineWidth(1.4)
+        canvas.drawString(margin+27*mm,height-10*mm,REPORT_COMPANY)
+        canvas.setFont('Helvetica-Bold',7)
+        canvas.drawString(margin+27*mm,height-15*mm,'FOLHA DE PAGAMENTO | CONTROLE INTERNO')
+        canvas.setFont('Helvetica',7)
+        canvas.drawRightString(width-margin,height-19*mm,f'Emissão: {generated}')
+        canvas.setStrokeColor(colors.black)
+        canvas.setLineWidth(0.5)
         canvas.line(margin,height-21*mm,width-margin,height-21*mm)
-        canvas.setLineWidth(0.4)
-        canvas.line(margin,height-22.2*mm,width-margin,height-22.2*mm)
         canvas.setStrokeColor(colors.HexColor('#cbd5e1'))
         canvas.line(margin,12*mm,width-margin,12*mm)
         canvas.setFont('Helvetica',7)
-        canvas.drawString(margin,8*mm,'Documento confidencial - uso administrativo')
+        canvas.drawString(margin,8*mm,REPORT_COMPANY+' | Uso administrativo')
         canvas.restoreState()
 
     def write_payslips_pdf(self,year,month,path,employee_id=None):
@@ -5410,7 +5558,7 @@ class FolhaBase:
         page_size=portrait(A4)
         earnings=[('Salário','salary'),('PF / adicional','pf'),('Hora extra','overtime'),('Férias','vacation'),('13º salário','thirteenth')]
         deductions=[('Marmitex','marmitex'),('Adiantamento Salarial','advances'),('Farmácia','pharmacy'),('Empréstimo','loan'),('Outros descontos','other_deductions')]
-        document=SimpleDocTemplate(path,pagesize=page_size,rightMargin=12*mm,leftMargin=12*mm,topMargin=24*mm,bottomMargin=18*mm,title=f'Demonstrativo de Pagamento - {MONTHS[month-1]} {year}',author=AUTHOR)
+        document=SimpleDocTemplate(path,pagesize=page_size,rightMargin=12*mm,leftMargin=12*mm,topMargin=24*mm,bottomMargin=18*mm,title=f'Demonstrativo de Pagamento - {MONTHS[month-1]} {year}',author=REPORT_COMPANY)
         story=[]
         for index,row in enumerate(rows):
             emp=info.get(row['employee_id'])
@@ -5561,10 +5709,10 @@ class FolhaBase:
                 'Sem lançamentos','Não há colaboradores lançados nesta competência.',
                 parent=self)
             return
-        win=tk.Toplevel(self)
-        win.title('Demonstrativos de Pagamento (PDF)')
-        win.transient(self)
-        win.grab_set()
+        win=self._report_window()
+        self._configure_form(win, 'title', 'Demonstrativos de Pagamento (PDF)')
+        self._configure_form(win, 'transient', self)
+        self._configure_form(win, 'grab_set')
         body=ttk.Frame(win,padding=20)
         body.pack(fill='both',expand=True)
         ttk.Label(
@@ -5801,13 +5949,13 @@ class FolhaBase:
                 parent=self)
             return
 
-        win=tk.Toplevel(self)
-        win.title('Salvar demonstrativos de pagamento em massa')
+        win=self._form_window(self)
+        self._configure_form(win, 'title', 'Salvar demonstrativos de pagamento em massa')
         win.configure(bg=BG)
-        win.transient(self)
-        win.grab_set()
-        win.geometry('620x480')
-        win.minsize(520,360)
+        self._configure_form(win, 'transient', self)
+        self._configure_form(win, 'grab_set')
+        self._configure_form(win, 'geometry', '620x480')
+        self._configure_form(win, 'minsize', 520, 360)
         body=ttk.Frame(win,padding=16)
         body.pack(fill='both',expand=True)
         body.columnconfigure(0,weight=1)
@@ -5908,11 +6056,11 @@ class FolhaBase:
             command=prepare_batch).pack(side='right')
 
     def saved_payslips_whatsapp_dialog(self,year,month,generated):
-        win=tk.Toplevel(self)
-        win.title(f'Demonstrativos de pagamento salvos — {month:02d}/{year}')
-        win.transient(self)
-        win.geometry('860x480')
-        win.minsize(680,360)
+        win=self._form_window(self)
+        self._configure_form(win, 'title', f'Demonstrativos de pagamento salvos — {month:02d}/{year}')
+        self._configure_form(win, 'transient', self)
+        self._configure_form(win, 'geometry', '860x480')
+        self._configure_form(win, 'minsize', 680, 360)
         body=ttk.Frame(win,padding=16)
         body.pack(fill='both',expand=True)
         body.columnconfigure(0,weight=1)
@@ -6033,9 +6181,9 @@ class FolhaBase:
         subtitle_style=ParagraphStyle('AnnualSubtitle',parent=styles['Normal'],fontName='Helvetica',fontSize=9,textColor=colors.HexColor('#64748b'),alignment=1,spaceAfter=10)
         summary_style=ParagraphStyle('AnnualSummary',parent=styles['Normal'],fontName='Helvetica-Bold',fontSize=10,leading=14,textColor=colors.HexColor(NAVY),alignment=1)
         generated=datetime.now().strftime('%d/%m/%Y %H:%M')
-        page_size=landscape(A4) if employee_id is None else portrait(A4)
+        page_size=landscape(A4)
         fmt=lambda v:brl(v).replace('R$ ','') if v else '–'
-        document=SimpleDocTemplate(path,pagesize=page_size,rightMargin=12*mm,leftMargin=12*mm,topMargin=24*mm,bottomMargin=18*mm,title=f'Relatório anual {year}',author=AUTHOR)
+        document=SimpleDocTemplate(path,pagesize=page_size,rightMargin=12*mm,leftMargin=12*mm,topMargin=24*mm,bottomMargin=18*mm,title=f'Relatório anual {year}',author=REPORT_COMPANY)
         story=[]
         if employee_id is None:
             head_style=ParagraphStyle('AnnualAllHead',parent=styles['Normal'],fontName='Helvetica-Bold',fontSize=7,leading=8,textColor=colors.white,alignment=1)
@@ -6081,7 +6229,7 @@ class FolhaBase:
                 if key=='total':
                     year_net=total
                 data.append([label]+[fmt(v) for v in values]+[fmt(total)])
-            table=Table(data,colWidths=[24*mm]+[11.8*mm]*12+[20*mm],repeatRows=1)
+            table=Table(data,colWidths=[34*mm]+[18.25*mm]*12+[20*mm],repeatRows=1)
             table.setStyle(TableStyle([
                 ('BACKGROUND',(0,0),(-1,0),colors.HexColor(NAVY)),
                 ('TEXTCOLOR',(0,0),(-1,0),colors.white),
@@ -6123,7 +6271,7 @@ class FolhaBase:
         if not years:
             messagebox.showinfo('Sem dados','Não há folhas criadas.',parent=self)
             return
-        win=tk.Toplevel(self);win.title('R$  Relatório anual (PDF)');win.transient(self);win.resizable(False,False);set_window_icon(win)
+        win=self._report_window();self._configure_form(win, 'title', 'R$  Relatório anual (PDF)');self._configure_form(win, 'transient', self);self._configure_form(win, 'resizable', False, False);set_window_icon(win)
         body=ttk.Frame(win,padding=18);body.pack(fill='both',expand=True)
         ttk.Label(body,text='Ano').pack(anchor='w')
         year_box=ttk.Combobox(body,values=years,state='readonly',width=32);year_box.pack(anchor='w',pady=(4,10))
@@ -6146,7 +6294,7 @@ class FolhaBase:
         buttons=ttk.Frame(body);buttons.pack(fill='x')
         ttk.Button(buttons,text='Cancelar',command=win.destroy).pack(side='right',padx=(8,0))
         ttk.Button(buttons,text='Gerar PDF',style='Report.TButton',command=generate).pack(side='right')
-        win.grab_set()
+        self._configure_form(win, 'grab_set')
 
     def write_employee_report_pdf(self,path,report_type,employee_id=None):
         if report_type=='general':
@@ -6236,7 +6384,7 @@ class FolhaBase:
             else 'Todos os colaboradores')
         document=SimpleDocTemplate(
             path,pagesize=page_size,rightMargin=15*mm,leftMargin=15*mm,
-            topMargin=22*mm,bottomMargin=15*mm,title=title,author=AUTHOR)
+            topMargin=24*mm,bottomMargin=15*mm,title=title,author=REPORT_COMPANY)
         cell_values=[list(headers)]
         for row in rows:
             if report_type=='address':
@@ -6282,7 +6430,7 @@ class FolhaBase:
             [paragraph(value,value_style) for value in row]
             for row in cell_values[1:])
         report_table=LongTable(
-            data,colWidths=column_widths,repeatRows=1,hAlign='CENTER')
+            data,colWidths=column_widths,repeatRows=1,hAlign='LEFT')
         report_table.setStyle(TableStyle([
             ('BACKGROUND',(0,0),(-1,0),colors.HexColor(NAVY)),
             ('ROWBACKGROUNDS',(0,1),(-1,-1),[colors.white,colors.HexColor('#f3f6fb')]),
@@ -6403,7 +6551,7 @@ class FolhaBase:
         document=SimpleDocTemplate(
             path,pagesize=page_size,rightMargin=15*mm,leftMargin=15*mm,
             topMargin=22*mm,bottomMargin=15*mm,
-            title='Relatório geral de colaboradores',author=AUTHOR)
+            title='Relatório geral de colaboradores',author=REPORT_COMPANY)
         story=[]
         for index,row in enumerate(rows):
             if index:
@@ -6466,11 +6614,11 @@ class FolhaBase:
                 parent=self)
             return
 
-        dialog=tk.Toplevel(self)
-        dialog.title('Relatórios de dados cadastrais')
+        dialog=self._report_window()
+        self._configure_form(dialog, 'title', 'Relatórios de dados cadastrais')
         dialog.configure(bg=BG)
-        dialog.transient(self)
-        dialog.resizable(False,False)
+        self._configure_form(dialog, 'transient', self)
+        self._configure_form(dialog, 'resizable', False, False)
         fields=ttk.Frame(dialog,padding=20)
         fields.pack(fill='both',expand=True)
         ttk.Label(
@@ -6535,7 +6683,7 @@ class FolhaBase:
             buttons,text='Gerar PDF',style='Accent.TButton',
             command=generate_report).pack(side='right',padx=(0,8))
         dialog.bind('<Escape>',lambda event:dialog.destroy())
-        dialog.grab_set()
+        self._configure_form(dialog, 'grab_set')
         self.wait_window(dialog)
 
     def loan_report_data(self,year,month,kind=LOAN_KIND,employee_id=None):
@@ -6831,7 +6979,7 @@ class FolhaBase:
         report_name=report_names.get(report_kind,'Relatório Geral por Colaborador')
         document=SimpleDocTemplate(
             path,pagesize=page_size,rightMargin=12*mm,leftMargin=12*mm,
-            topMargin=24*mm,bottomMargin=18*mm,title=report_name,author=AUTHOR)
+            topMargin=24*mm,bottomMargin=18*mm,title=report_name,author=REPORT_COMPANY)
         story=[Paragraph(report_name,title_style)]
 
         total_balance=0.0
@@ -7082,12 +7230,12 @@ class FolhaBase:
                 'SELECT id,name FROM employees ORDER BY active DESC,name COLLATE NOCASE').fetchall()
         choices=['Todos os colaboradores']+[f'{employee["name"]} (#{employee["id"]})' for employee in employees]
         employee_ids=[None]+[employee['id'] for employee in employees]
-        dialog=tk.Toplevel(self)
-        dialog.title(report_title)
+        dialog=self._report_window()
+        self._configure_form(dialog, 'title', report_title)
         dialog.configure(bg=BG)
-        dialog.transient(self)
-        dialog.grab_set()
-        dialog.resizable(False,False)
+        self._configure_form(dialog, 'transient', self)
+        self._configure_form(dialog, 'grab_set')
+        self._configure_form(dialog, 'resizable', False, False)
         fields=ttk.Frame(dialog,padding=20)
         fields.pack(fill='both',expand=True)
         ttk.Label(
@@ -7205,7 +7353,7 @@ class FolhaBase:
         document=SimpleDocTemplate(
             path,pagesize=page_size,rightMargin=12*mm,leftMargin=12*mm,
             topMargin=24*mm,bottomMargin=18*mm,
-            title='Relatório de salários atualizados',author=AUTHOR)
+            title='Relatório de salários atualizados',author=REPORT_COMPANY)
         story=[
             Paragraph('Relatório de salários atualizados',title_style),
             Paragraph(
@@ -7293,13 +7441,49 @@ class FolhaPanel(FolhaBase,tk.Frame):
         tk.Frame.__init__(self,master,bg=BG)
         self.centralized_actions=centralized_actions
         self.signing_status_callback=signing_status_callback
+        self.compact_layout=False
         self._init_folha()
+
+    def set_compact_layout(self,compact):
+        if self.compact_layout==compact:
+            return
+        self.compact_layout=compact
+        self.navigation_toolbar.configure(padding=(6,3) if compact else (8,6))
+        for button in self.navigation_toolbar.winfo_children():
+            if isinstance(button,ttk.Button):
+                width=22 if button is self.navigation_buttons['loans'] else 14
+                if button is self.navigation_buttons.get('about'):
+                    width=8
+                button.configure(compound='left' if compact else 'top',
+                                 width=0 if compact else width)
+        if hasattr(self,'signing_expiry_label'):
+            self.signing_expiry_label.configure(padx=6 if compact else 9,pady=3 if compact else 5)
+        self.main_content.configure(padding=(6,3) if compact else (8,6))
+        self.titlebar.pack_configure(pady=(0,3) if compact else (0,8))
+        self.page_title.pack_configure(pady=3 if compact else 8)
+        self.dashboard_logo_label.configure(
+            image=self.compact_dashboard_logo_image if compact else self.dashboard_logo_image)
+        self.dashboard_tab.configure(padding=8 if compact else 14)
+        self.dashboard_topbar.pack_configure(pady=(0,5) if compact else (0,10))
+        self.dashboard_quick_actions.pack_configure(pady=(0,6) if compact else (0,12))
+        self.dashboard_cards.pack_configure(pady=(0,8) if compact else (0,14))
+        self.dashboard_summary.pack_configure(pady=(0,8) if compact else (0,14))
+        for icon,hint in zip(self.card_icons,self.card_hints):
+            icon.pack_configure(pady=(4,2) if compact else (9,4))
+            hint.pack_configure(pady=(0,5) if compact else (0,9))
+        self.closed_title.pack_configure(pady=(5,1) if compact else (10,1))
+        self.closed_hint.pack_configure(pady=(0,5) if compact else (0,10))
+        for canvas,_kind in self.dashboard_charts:
+            canvas.configure(height=150 if compact else 200)
+        self.scroll_host.after_idle(self.scroll_host._layout)
 
     def reapply_style(self):
         self._style()
 
     def close_module(self):
         self.save_exit_backups()
+        if hasattr(self,'inline_forms'):
+            self.inline_forms.close_all()
         self.destroy()
 
 def main():

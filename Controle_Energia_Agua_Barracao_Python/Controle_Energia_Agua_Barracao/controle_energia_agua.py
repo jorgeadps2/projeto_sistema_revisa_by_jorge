@@ -308,6 +308,8 @@ def dividir_valor_por_meses(valor,quantidade):
     return [(base+(indice<resto))/100 for indice in range(quantidade)]
 
 def vincular_restauracao_modal(root,win):
+    if isinstance(win,tk.Frame):
+        return
     def restaurar(_evento=None):
         if not win.winfo_exists():
             return
@@ -340,7 +342,7 @@ def data_iso(v):
 def lancamento_vencido(ano,mes,hoje=None):
     hoje=hoje or date.today()
     ano_vencimento,mes_vencimento=(ano+1,1) if mes==12 else (ano,mes+1)
-    return (hoje.year,hoje.month,hoje.day)>(ano_vencimento,mes_vencimento,10)
+    return (hoje.year,hoje.month,hoje.day)>(ano_vencimento,mes_vencimento,5)
 
 
 class App:
@@ -574,6 +576,28 @@ class App:
         style.configure("Form.TCheckbutton",background=FUNDO,foreground=TEXTO_CLARO)
         style.map("Form.TCheckbutton",background=[("active",SUPERFICIE_ALT)])
 
+    def _form_window(self,parent):
+        if self.embutido:
+            return self.inline_forms.open()
+        return tk.Toplevel(parent)
+
+    def _configure_form(self,form,option,*args):
+        if isinstance(form,tk.Toplevel):
+            return getattr(form,option)(*args)
+        from revisa_integrado.ui.action_layout import configure_form
+        return configure_form(form,option,*args)
+
+    def _group_actions(self,parent,title):
+        if self.embutido:
+            from revisa_integrado.ui.action_layout import group_actions
+            return group_actions(parent,title)
+
+    def _single_action(self,parent,title,command):
+        if self.embutido:
+            from revisa_integrado.ui.action_layout import group_actions
+            return group_actions(parent,title,command=command)
+        return None
+
     def montar(self):
         toolbar=ttk.Frame(self.root,style="Toolbar.TFrame",padding=(12,8))
         toolbar.pack(fill="x")
@@ -629,6 +653,16 @@ class App:
         self.nb.add(self.tab_rel,text="Relatórios" if self.embutido else "Relatórios e backup")
         self.tab_sobre=ttk.Frame(self.nb,padding=12)
         self.nb.add(self.tab_sobre,text="Sobre")
+        if self.embutido:
+            from revisa_integrado.ui.action_layout import InlineForms
+            self.form_host=ttk.Frame(self.root)
+            def hide_content():
+                self.form_host.pack(fill="both",expand=True,before=self.nb)
+                self.nb.pack_forget()
+            def restore_content():
+                self.nb.pack(fill="both",expand=True,padx=16,pady=(0,8),before=self.form_host)
+                self.form_host.pack_forget()
+            self.inline_forms=InlineForms(self.form_host,hide_content,restore_content)
         self.nb.bind("<<NotebookTabChanged>>",self.atualizar_navegacao)
         self.atualizar_navegacao()
         self.montar_mes(); self.montar_ocupantes(); self.montar_relatorios()
@@ -689,6 +723,8 @@ class App:
         return icones
 
     def atualizar_navegacao(self,_evento=None):
+        if hasattr(self,"inline_forms"):
+            self.inline_forms.close_all()
         selecionada=self.nb.index(self.nb.select())
         self.titulo_pagina.configure(text=self.nb.tab(selecionada,"text"))
         for indice,botao in self.botoes_navegacao.items():
@@ -721,6 +757,7 @@ class App:
         mes.bind("<<ComboboxSelected>>",lambda _:self.carregar_lancamentos())
         ttk.Button(f,text="Nova conta / editar contas do mês",command=self.editar_contas_mes).pack(side="left",padx=5)
         ttk.Button(f,text="Pagamentos / reverter",command=self.registrar_pagamento).pack(side="left",padx=5)
+        self._group_actions(f,"Contas e pagamentos")
         corpo=ttk.Frame(self.tab_mes)
         corpo.pack(fill="both",expand=True)
         corpo.columnconfigure(0,weight=1)
@@ -755,6 +792,7 @@ class App:
         tk.Label(energia_box,textvariable=self.energia_previa,bg=fundo_rateio,fg="#17645e",font=("Segoe UI",11,"bold"),wraplength=310,justify="left").grid(row=6,column=0,sticky="w",pady=12)
         tk.Label(energia_box,text="A iluminação já faz parte do total.\nCada consumo recebe energia + iluminação por kWh, sem duplicar.\n\nREVISA recebe o restante da conta; saldo negativo é crédito.",bg=fundo_rateio,fg="#25313c",wraplength=310,justify="left").grid(row=7,column=0,sticky="w")
         ttk.Button(energia_box,text="Salvar e calcular energia",command=self.salvar_rateio_energia).grid(row=8,column=0,sticky="ew",pady=12)
+        self._single_action(energia_box,"Rateio de energia",self.salvar_rateio_energia)
         tk.Label(agua_box,text="Valor total da conta (R$)",bg=fundo_rateio,fg="#25313c",font=("Segoe UI",11)).grid(row=0,column=0,sticky="w")
         tk.Label(agua_box,text="Pessoas no terreno\n(soma automática dos inquilinos)",bg=fundo_rateio,fg="#25313c",font=("Segoe UI",11),justify="left").grid(row=2,column=0,sticky="w",pady=(18,0))
         tk.Label(agua_box,text="Valor por pessoa",bg=fundo_rateio,fg="#25313c",font=("Segoe UI",11)).grid(row=4,column=0,sticky="w",pady=(18,0))
@@ -766,6 +804,7 @@ class App:
         tk.Label(agua_box,textvariable=self.agua_por_pessoa,bg=fundo_rateio,fg="#17645e",font=("Segoe UI",11,"bold"),wraplength=310,justify="left").grid(row=5,column=0,sticky="w",pady=(6,0))
         tk.Label(agua_box,text="Água: valor total ÷ pessoas não isentas × pessoas do inquilino.\n\nIsentos não participam da divisão da água.\n\nInforme a quantidade na coluna Pessoas da aba Inquilinos.",bg=fundo_rateio,fg="#25313c",wraplength=310,justify="left").grid(row=6,column=0,sticky="w",pady=(18,0))
         ttk.Button(agua_box,text="Salvar rateio da água",command=self.salvar_rateio_agua).grid(row=7,column=0,sticky="ew",pady=(18,0))
+        self._single_action(agua_box,"Rateio da água",self.salvar_rateio_agua)
         self.agua_total_var.trace_add("write",lambda *_:self.atualizar_previa_agua())
         self.lbl_mes_planilha=ttk.Label(
             planilha,text="",font=("Segoe UI",13,"bold")
@@ -803,6 +842,7 @@ class App:
         ttk.Button(acoes,text="Adicionar despesa",command=self.editar_despesa).pack(side="left")
         ttk.Button(acoes,text="Editar selecionada",command=lambda:self.editar_despesa(True)).pack(side="left",padx=6)
         ttk.Button(acoes,text="Excluir selecionada",command=self.excluir_despesa).pack(side="left")
+        self._group_actions(acoes,"Despesas")
         lista=ttk.Frame(despesas);lista.pack(fill="x")
         self.despesas_tree=ttk.Treeview(lista,columns=("descricao","valor","rateio"),show="headings",height=3)
         self.despesas_tree.heading("descricao",text="Descrição")
@@ -830,6 +870,7 @@ class App:
         ttk.Button(f,text="Adicionar inquilino",command=self.adicionar_ocupante).pack(side="left")
         ttk.Button(f,text="Excluir inquilino selecionado",command=self.excluir_ocupante).pack(side="left",padx=8)
         ttk.Button(f,text="Ativar/desativar selecionado",command=self.alternar_ocupante).pack(side="left")
+        self._group_actions(f,"Inquilinos")
         ttk.Label(
             self.tab_oc,
             text="Clique em uma cobrança para alternar Sim/Não. Clique na observação para editar. "
@@ -885,6 +926,7 @@ class App:
             ttk.Button(f,text="Abrir pasta de dados",command=self.abrir_pasta).pack(side="left",padx=8)
             ttk.Button(f,text="Alterar senha",command=lambda:solicitar_acesso(self.root,alterar=True)).pack(side="left",padx=8)
         ttk.Label(self.tab_rel,text=f"Banco de dados atual: {DB_PATH}",wraplength=1000).pack(anchor="w",pady=15)
+        self._group_actions(f,"Relatórios")
 
     def garantir_mes(self,ano,mes):
         self.conn.execute("INSERT OR IGNORE INTO meses(ano,mes,usar_rateio_despesas) VALUES(?,?,1)",(ano,mes));self.conn.commit()
@@ -1138,7 +1180,7 @@ class App:
             row=self.conn.execute("SELECT * FROM despesas_mes WHERE id=? AND mes_id=?",(sel[0],mid)).fetchone()
             if not row:
                 messagebox.showerror("Despesa não encontrada","Carregue o mês e selecione a despesa novamente.");return
-        win=tk.Toplevel(self.root);win.title("Outras despesas do mês");win.transient(self.root);win.grab_set()
+        win=self._form_window(self.root);self._configure_form(win, 'title', "Outras despesas do mês");self._configure_form(win, 'transient', self.root);self._configure_form(win, 'grab_set')
         vincular_restauracao_modal(self.root,win)
         self.configurar_estilo_formulario(win)
         largura_tela=win.winfo_screenwidth()
@@ -1146,8 +1188,8 @@ class App:
         largura_dialogo=min(800,max(280,largura_tela-24))
         altura_dialogo=min(760,max(240,altura_tela-48))
         colunas_lado_a_lado=largura_dialogo>=760
-        win.geometry(f"{largura_dialogo}x{altura_dialogo}")
-        win.minsize(min(360,largura_dialogo),min(320,altura_dialogo))
+        self._configure_form(win, 'geometry', f"{largura_dialogo}x{altura_dialogo}")
+        self._configure_form(win, 'minsize', min(360,largura_dialogo), min(320,altura_dialogo))
         win.columnconfigure(0,weight=1)
         win.rowconfigure(0,weight=1)
         conteudo=ttk.Frame(win,style="Form.TFrame")
@@ -1408,7 +1450,7 @@ class App:
                 self.root.winfo_rooty()+(self.root.winfo_height()-altura_dialogo)//2,
             ),
         )
-        win.geometry(f"{largura_dialogo}x{altura_dialogo}+{x}+{y}")
+        self._configure_form(win, 'geometry', f"{largura_dialogo}x{altura_dialogo}+{x}+{y}")
         descricao_entry.focus_set()
 
     def excluir_despesa(self):
@@ -1790,7 +1832,7 @@ class App:
         ano=int(self.m_ano.get());mes=int(self.m_mes.get())
         if ano<2026:messagebox.showwarning("Período","O sistema começa em 2026.");return
         mid=self.garantir_mes(ano,mes); row=self.contas_mes(mid)
-        win=tk.Toplevel(self.root);win.title(f"Contas gerais — {mes:02d}/{ano}");win.transient(self.root);win.grab_set()
+        win=self._form_window(self.root);self._configure_form(win, 'title', f"Contas gerais — {mes:02d}/{ano}");self._configure_form(win, 'transient', self.root);self._configure_form(win, 'grab_set')
         self.configurar_estilo_formulario(win)
         fields=[("Conta de energia (R$)","energia",row["conta_energia"]),("Consumo total de energia (kWh)","kwh",row["total_kwh"]),("Valor total da conta de água do mês (R$)","agua",row["conta_agua"]),("Pessoas no terreno (automático)","pessoas_agua",row["total_pessoas_agua"])]
         vars={}
@@ -1835,11 +1877,11 @@ class App:
     def editar_lancamento(self):
         row=self.obter_lancamento_selecionado()
         if not row:return
-        win=tk.Toplevel(self.root)
-        win.title("Editar lançamento")
-        win.transient(self.root)
-        win.grab_set()
-        win.resizable(False,False)
+        win=self._form_window(self.root)
+        self._configure_form(win, 'title', "Editar lançamento")
+        self._configure_form(win, 'transient', self.root)
+        self._configure_form(win, 'grab_set')
+        self._configure_form(win, 'resizable', False, False)
         self.configurar_estilo_formulario(win)
 
         moldura=ttk.Frame(win,padding=14,style="Form.TFrame")
@@ -2137,7 +2179,7 @@ class App:
         row=self.obter_lancamento_selecionado()
         if not row:return
         en,agua,total,pago,saldo=self.valores_lancamento(row)
-        win=tk.Toplevel(self.root);win.title(f"Pagamento — {row['nome']}");win.transient(self.root);win.grab_set()
+        win=self._form_window(self.root);self._configure_form(win, 'title', f"Pagamento — {row['nome']}");self._configure_form(win, 'transient', self.root);self._configure_form(win, 'grab_set')
         self.configurar_estilo_formulario(win)
         vars={}
         for i,(lab,key,val) in enumerate([("Data do pagamento (DD/MM/AAAA)","data",date.today().strftime("%d/%m/%Y")),("Valor pago (R$)","valor",f"{saldo:.2f}".replace(".",",")),("Forma (PIX, dinheiro etc.)","forma","PIX")]):
@@ -2268,10 +2310,10 @@ class App:
         self.carregar_lancamentos()
 
     def dialogo_relatorio_pdf(self):
-        win=tk.Toplevel(self.root)
-        win.title("Gerar relatório em PDF")
-        win.transient(self.root)
-        win.resizable(False,False)
+        win=self._form_window(self.root)
+        self._configure_form(win, 'title', "Gerar relatório em PDF")
+        self._configure_form(win, 'transient', self.root)
+        self._configure_form(win, 'resizable', False, False)
         moldura=ttk.Frame(win,padding=18)
         moldura.pack(fill="both",expand=True)
 
@@ -2371,13 +2413,12 @@ class App:
         botoes.grid(row=9,column=0,columnspan=2,sticky="e",pady=(16,0))
         ttk.Button(botoes,text="Cancelar",command=win.destroy).pack(side="right")
         ttk.Button(botoes,text="Salvar PDF",command=gerar).pack(side="right",padx=(0,8))
-        win.grab_set()
+        self._configure_form(win, 'grab_set')
 
     def gerar_relatorio_pdf(self,path,ano,mes,ocupante_id=None,opcoes=("resumo","detalhado","contas")):
         from xml.sax.saxutils import escape
         from reportlab.lib import colors
-        from reportlab.lib.enums import TA_CENTER
-        from reportlab.lib.pagesizes import A4,landscape
+        from reportlab.lib.pagesizes import A4,landscape,portrait
         from reportlab.lib.styles import getSampleStyleSheet,ParagraphStyle
         from reportlab.lib.units import mm
         from reportlab.platypus import (
@@ -2404,56 +2445,65 @@ class App:
         if ocupante_id is not None and not lancamentos:
             raise ValueError("Não há lançamento desse ocupante no mês selecionado.")
 
+        page_size=portrait(A4) if ocupante_id is not None else landscape(A4)
+        usable_width=page_size[0]-36*mm
+        company="FTS Distribuidora de Peças Ltda"
+        generated=datetime.now().strftime("%d/%m/%Y %H:%M")
         styles=getSampleStyleSheet()
         styles.add(ParagraphStyle(name="ReportTitle",parent=styles["Title"],fontName="Helvetica-Bold",
-                                  fontSize=17,leading=21,textColor=colors.HexColor("#18212b"),
-                                  alignment=TA_CENTER,spaceAfter=5))
-        styles.add(ParagraphStyle(name="SectionTitle",parent=styles["Heading2"],fontSize=12,
-                                  leading=15,textColor=colors.HexColor("#245A9B"),spaceBefore=10,
-                                  spaceAfter=6))
+                                  fontSize=14,leading=17,textColor=colors.black,
+                                  alignment=0,spaceAfter=5))
+        styles["ReportTitle"].fontName="Helvetica-BoldOblique"
+        styles.add(ParagraphStyle(name="SectionTitle",parent=styles["Heading2"],fontSize=10,
+                                  leading=12,textColor=colors.black,spaceBefore=8,
+                                  spaceAfter=4))
+        styles["Heading3"].fontName="Helvetica-Bold"
+        styles["Heading3"].fontSize=10
+        styles["Heading3"].leading=12
+        styles["Heading4"].fontSize=9
+        styles["Heading4"].leading=11
         styles.add(ParagraphStyle(name="Small",parent=styles["BodyText"],fontSize=8,leading=10))
         styles.add(ParagraphStyle(name="ReportNote",parent=styles["Small"],
                                   textColor=colors.HexColor("#596b7b"),spaceBefore=3))
         styles.add(ParagraphStyle(name="ReportStatus",parent=styles["Small"],
                                   fontName="Helvetica-Bold",fontSize=9,leading=12,
-                                  textColor=colors.HexColor("#245A9B"),spaceBefore=4))
+                                  textColor=colors.black,spaceBefore=4))
         styles.add(ParagraphStyle(name="FinancialValue",parent=styles["Small"],
-                                  fontName="Helvetica-Bold"))
+                                  fontName="Helvetica-Bold",fontSize=10,leading=12))
         styles.add(ParagraphStyle(name="FinancialLabel",parent=styles["Small"],
                                   fontName="Helvetica-Bold",
                                   textColor=colors.HexColor("#18212b")))
         def paragrafo(valor,estilo="Small"):
-            return Paragraph(escape(str(valor)).replace("\n","<br/>"),styles[estilo])
+            style=styles[estilo]
+            if str(valor).startswith("R$"):
+                style=ParagraphStyle(name=estilo+"Numeric",parent=style,alignment=2)
+            return Paragraph(escape(str(valor)).replace("\n","<br/>"),style)
         def tabela(dados,larguras,header=True,linhas_resumo=()):
-            tabela_pdf=Table(dados,colWidths=larguras,repeatRows=1 if header else 0)
+            larguras=[width*usable_width/sum(larguras) for width in larguras]
+            tabela_pdf=Table(dados,colWidths=larguras,repeatRows=1 if header else 0,hAlign="LEFT")
             estilos=[
                 ("VALIGN",(0,0),(-1,-1),"TOP"),
-                ("GRID",(0,0),(-1,-1),0.3,colors.HexColor("#d5dde3")),
-                ("ROWBACKGROUNDS",(0,1 if header else 0),(-1,-1),
-                 [colors.white,colors.HexColor("#f5f8fa")]),
-                ("BACKGROUND",(0,0),(-1,0),colors.HexColor("#245A9B")) if header else
-                ("BACKGROUND",(0,0),(-1,-1),colors.white),
-                ("TEXTCOLOR",(0,0),(-1,0),colors.white) if header else
-                ("TEXTCOLOR",(0,0),(-1,-1),colors.HexColor("#18212b")),
+                ("LINEABOVE",(0,0),(-1,0),0.5,colors.black),
+                ("LINEBELOW",(0,0),(-1,0),0.5,colors.black),
+                ("LINEBELOW",(0,-1),(-1,-1),0.5,colors.black),
+                ("TEXTCOLOR",(0,0),(-1,-1),colors.black),
                 ("ALIGN",(-1,0),(-1,-1),"RIGHT"),
                 ("LEFTPADDING",(0,0),(-1,-1),5),("RIGHTPADDING",(0,0),(-1,-1),5),
-                ("TOPPADDING",(0,0),(-1,-1),4),("BOTTOMPADDING",(0,0),(-1,-1),4),
+                ("TOPPADDING",(0,0),(-1,-1),2.5),("BOTTOMPADDING",(0,0),(-1,-1),2.5),
             ]
-            for linha,cor in linhas_resumo:
+            for linha,_cor in linhas_resumo:
                 estilos.extend([
-                    ("BACKGROUND",(0,linha),(-1,linha),cor),
-                    ("LINEABOVE",(0,linha),(-1,linha),0.8,colors.HexColor("#245A9B")),
+                    ("LINEABOVE",(0,linha),(-1,linha),0.5,colors.black),
                 ])
             tabela_pdf.setStyle(TableStyle(estilos))
             return tabela_pdf
         styles.add(ParagraphStyle(name="TableHeader",parent=styles["Small"],
-                                  fontName="Helvetica-Bold",textColor=colors.white))
+                                  fontName="Helvetica-Bold",textColor=colors.black))
         story=[
             Paragraph(
                 f"{'Conta individual' if ocupante_id is not None else 'Relatório mensal'} — {mes:02d}/{ano}",
                 styles["ReportTitle"],
             ),
-            paragrafo("Gerado em "+datetime.now().strftime("%d/%m/%Y %H:%M")),
             Spacer(1,4*mm),
         ]
         if ocupante_id is not None:
@@ -2567,16 +2617,30 @@ class App:
 
         def rodape(canvas,documento):
             canvas.saveState()
+            width,height=page_size
+            canvas.drawImage(str(caminho_recurso("assets/logo_revisa.png")),
+                18*mm,height-19*mm,width=23*mm,height=14*mm,
+                preserveAspectRatio=True,mask="auto")
+            canvas.setFillColor(colors.black)
+            canvas.setFont("Helvetica-Bold",11)
+            canvas.drawString(45*mm,height-10*mm,company)
+            canvas.setFont("Helvetica-Bold",7)
+            canvas.drawString(45*mm,height-15*mm,"CONTROLE DE ENERGIA E ÁGUA")
+            canvas.setFont("Helvetica",7)
+            canvas.drawRightString(width-18*mm,height-19*mm,f"Emissão: {generated}")
+            canvas.drawRightString(width-18*mm,height-15*mm,f"Página nº: {documento.page}")
+            canvas.setLineWidth(0.5)
+            canvas.line(18*mm,height-21*mm,width-18*mm,height-21*mm)
             canvas.setFont("Helvetica",8)
             canvas.setFillColor(colors.HexColor("#596b7b"))
-            canvas.drawString(18*mm,10*mm,f"Controle de Energia e Água · {mes:02d}/{ano}")
-            canvas.drawRightString(landscape(A4)[0]-18*mm,10*mm,f"Página {documento.page}")
+            canvas.drawString(18*mm,10*mm,company)
+            canvas.drawRightString(width-18*mm,10*mm,f"Energia e Água · {mes:02d}/{ano}")
             canvas.restoreState()
 
         documento=SimpleDocTemplate(
-            str(path),pagesize=landscape(A4),rightMargin=18*mm,leftMargin=18*mm,
-            topMargin=15*mm,bottomMargin=18*mm,title=f"Relatório mensal {mes:02d}/{ano}",
-            author=APP_NAME,
+            str(path),pagesize=page_size,rightMargin=18*mm,leftMargin=18*mm,
+            topMargin=24*mm,bottomMargin=18*mm,title=f"Relatório mensal {mes:02d}/{ano}",
+            author=company,
         )
         documento.build(story,onFirstPage=rodape,onLaterPages=rodape)
 
@@ -2597,6 +2661,8 @@ class App:
         except Exception:messagebox.showinfo("Pasta de dados",str(PASTA))
 
     def encerrar(self):
+        if hasattr(self,"inline_forms"):
+            self.inline_forms.close_all()
         conn=getattr(self,"conn",None)
         if conn is None:return
         try:conn.commit()

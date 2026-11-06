@@ -19,10 +19,69 @@ A tela de senha permanece centralizada no mesmo monitor da janela, inclusive com
 monitores conectados.
 O rodapé do login exibe a imagem do robô ao lado do crédito do desenvolvedor.
 Os textos do rodapé ficam centralizados horizontal e verticalmente em suas colunas.
+A tela de acesso tem formato compacto (560 × 310), cabeçalho e rodapé azuis com
+detalhes laranja, logo e razão social à esquerda e formulário à direita.
+A barra nativa com ícone e versão fica oculta somente no login. Arraste o
+cabeçalho azul para mover a janela e use o botão × para fechar normalmente.
+A janela principal recupera a barra nativa após entrar.
+O login aparece na barra de tarefas do Windows mesmo sem a barra nativa.
+O acesso exibe a empresa acima e usuário fixo, senha curta e botão Entrar compacto
+na mesma linha. Empresa e usuário são somente leitura; o campo curto não limita
+o tamanho da senha. A linha ocupa a largura da empresa, com usuário mais estreito,
+senha mais larga e Entrar compacto; Mostrar/Ocultar fica alinhado sob a senha.
+Mostrar/Ocultar controla a visibilidade da senha. O rodapé tem duas
+colunas, sem nome do sistema ou versão, e exibe os estados reais da sincronização
+e do certificado, incluindo o vencimento quando disponível. Cadastro de senha
+e recuperação de banco continuam em telas maiores para acomodar suas opções.
 A janela principal abre maximizada no monitor do login após a montagem do menu.
 Ao abrir a Folha ou o
 Energia e Água, a janela em tamanho normal volta ao centro do monitor; a maximização
 feita pelo usuário é preservada.
+Em janelas com largura menor que 1200 ou altura menor que 800 pixels, o modo
+compacto é ativado automaticamente: a barra principal usa ícones ao lado dos
+textos e a Folha reduz cabeçalhos, cartões e espaçamentos, sem ocultar ações.
+As tabelas mantêm a fonte de leitura e as barras de rolagem. Ao ampliar a janela,
+o layout original retorna, preservando a seção aberta e os dados não salvos.
+
+A tela **Sobre** apresenta as informações do sistema e do desenvolvedor e os
+detalhes técnicos em cartões, sem logotipo. Os cartões ficam lado a lado em
+janelas largas e se organizam verticalmente em janelas menores.
+
+Na versão integrada, a Folha e o Controle de Energia e Água usam menus de
+ações compactos com ícones, fundo azul suave e destaque ao passar o mouse,
+agrupados na aba correspondente. Na Folha, o menu de relatórios
+fica alinhado ao menu de ações da aba.
+Na aba Proventos / Descontos, Adiantamentos, Empréstimo e Meta ficam juntos
+no menu Relatórios, disponível em todas as subabas.
+As colunas de Proventos / Descontos se ajustam ao conteúdo, com largura limitada
+e rolagem horizontal, sem esticar Observações para ocupar toda a tela.
+Em Salários, Adiantamentos, Empréstimos e Meta, a coluna do colaborador
+comporta o nome completo, sem o limite de largura das demais colunas.
+Os filtros dos relatórios da Folha abrem em janelas compactas centralizadas.
+Cadastros e edições abrem dentro do módulo; **Voltar** retorna à tela anterior sem
+salvar o formulário. As ações de salvar, excluir, calcular e gerar arquivos
+mantêm suas regras. Confirmações, seleção de arquivos e autenticação continuam
+usando as caixas de diálogo do Windows. As versões autônomas preservam sua navegação.
+
+### Relatórios em PDF
+
+Os relatórios da Folha e do Controle de Energia e Água usam a logo e a razão social
+**FTS Distribuidora de Peças Ltda**, com cabeçalho de emissão/paginação,
+títulos à esquerda, tabelas sem fundos coloridos e divisórias horizontais.
+Nomes longos quebram a linha; os valores e totais mantêm os cálculos existentes.
+Na Folha a pagar, os valores ficam centralizados, com proventos e líquido em
+azul e descontos em vermelho; os nomes permanecem alinhados à esquerda.
+As observações, referências de parcelas, quitações e históricos de pagamentos
+continuam disponíveis nos relatórios correspondentes.
+
+O anual por colaborador usa A4 horizontal para facilitar a leitura dos meses.
+A conta individual de Energia e Água usa A4 vertical, sem dados dos demais ocupantes.
+Filtros e seleção de seções continuam funcionando. PDFs contábeis importados e
+arquivos já gerados não são modificados; o padrão se aplica aos novos PDFs.
+O encaixe do PDF contábil abaixo do demonstrativo desconsidera o rodapé
+administrativo, preservando o anexo na mesma página quando há espaço disponível.
+Ao assinar digitalmente um PDF da Folha, o carimbo aparece em todas as páginas.
+Uma única assinatura criptográfica cobre o documento inteiro, incluindo os carimbos.
 
 ## Executar pelo código-fonte
 
@@ -42,6 +101,8 @@ python -m PyInstaller --noconfirm --clean --distpath ..\dist Sistemas_Revisa.spe
 ```
 
 O executável será gerado em `dist\Sistemas_Revisa.exe`.
+As DLLs de compatibilidade do Python usadas pela assinatura digital são
+incluídas quando disponíveis no interpretador utilizado para gerar o executável.
 
 ## Sincronização entre computadores
 

@@ -48,11 +48,11 @@ class RateiosTest(unittest.TestCase):
         self.assertEqual(sistema.chave_nome_ocupante(correto),
                          sistema.chave_nome_ocupante(corrompido))
 
-    def test_lancamento_so_vence_depois_do_dia_10_do_mes_seguinte(self):
-        self.assertFalse(sistema.lancamento_vencido(2026,1,date(2026,2,10)))
-        self.assertTrue(sistema.lancamento_vencido(2026,1,date(2026,2,11)))
-        self.assertFalse(sistema.lancamento_vencido(2026,12,date(2027,1,10)))
-        self.assertTrue(sistema.lancamento_vencido(2026,12,date(2027,1,11)))
+    def test_lancamento_so_vence_depois_do_dia_5_do_mes_seguinte(self):
+        self.assertFalse(sistema.lancamento_vencido(2026,1,date(2026,2,5)))
+        self.assertTrue(sistema.lancamento_vencido(2026,1,date(2026,2,6)))
+        self.assertFalse(sistema.lancamento_vencido(2026,12,date(2027,1,5)))
+        self.assertTrue(sistema.lancamento_vencido(2026,12,date(2027,1,6)))
 
     def test_nao_cadastra_ocupante_com_nome_corrompido_duplicado(self):
         self.app.oc_nome=SimpleNamespace(get=lambda:"MARCOS - MM FULG\u00c3\u2022ES")
@@ -407,11 +407,11 @@ class RateiosTest(unittest.TestCase):
             self.app.atualizar_aviso_aberto()
         self.assertEqual(self.app.aviso_aberto.pack_forget.call_count,2)
 
-        with patch.object(sistema,"date",SimpleNamespace(today=lambda:date(2026,11,10))):
+        with patch.object(sistema,"date",SimpleNamespace(today=lambda:date(2026,11,5))):
             self.app.atualizar_aviso_aberto()
         self.assertEqual(self.app.aviso_aberto.pack_forget.call_count,3)
 
-        with patch.object(sistema,"date",SimpleNamespace(today=lambda:date(2026,11,11))):
+        with patch.object(sistema,"date",SimpleNamespace(today=lambda:date(2026,11,6))):
             self.app.atualizar_aviso_aberto()
         texto=self.app.aviso_aberto.config.call_args.kwargs["text"]
         self.assertEqual(

@@ -171,6 +171,7 @@ def append_employee_report_pages(
         return report_page
 
     footer_text = 'documento confidencial - uso administrativo'
+    company_footer = 'fts distribuidora de peças ltda | uso administrativo'
     page_number_pattern = re.compile(r'página\s+\d+\s+de\s+\d+', re.IGNORECASE)
     available_pages = []
     for page_index, page in enumerate(writer.pages):
@@ -186,6 +187,8 @@ def append_employee_report_pages(
                 float(content_matrix[2]) * float(text_matrix[4])
                 + float(content_matrix[3]) * float(text_matrix[5])
                 + float(content_matrix[5]))
+            if clean_text == company_footer and text_y <= 36:
+                return
             lowest_text_y = (
                 text_y if lowest_text_y is None
                 else min(lowest_text_y, text_y))

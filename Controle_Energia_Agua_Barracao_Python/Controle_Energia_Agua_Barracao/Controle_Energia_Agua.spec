@@ -5,7 +5,7 @@ a = Analysis(
     ['controle_energia_agua.py'],
     pathex=[],
     binaries=[],
-    datas=[('assets/revisa_logo.jpeg', 'assets'), ('assets/imovel.png', 'assets')],
+    datas=[('assets/revisa_logo.jpeg', 'assets'), ('assets/imovel.png', 'assets'), ('assets/logo_revisa.png', 'assets')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

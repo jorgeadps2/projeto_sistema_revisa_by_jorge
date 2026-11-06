@@ -608,22 +608,131 @@ def change_main_password(self):
 # ---------------------------------------------------------------------- sobre
 def build_about(self, frame):
     inner = _scrollable(frame)
-    box = t.card(inner, APP_NAME)
-    box.pack(fill="x")
+    heading = tk.Frame(inner, bg=t.BG)
+    heading.pack(fill="x", pady=(0, 14))
+    icon = self._icon("sobre", 32)
+    if icon:
+        tk.Label(heading, image=icon, bg=t.BG).pack(side="left", padx=(0, 10))
+    title = tk.Frame(heading, bg=t.BG)
+    title.pack(side="left", fill="x", expand=True)
+    t.label(title, "Sobre o REVISA", 18, t.PRIMARY_DARK, True, bg=t.BG).pack(anchor="w")
+    t.label(title, "Informações do sistema, módulos instalados e armazenamento.", 9, t.MUTED,
+            bg=t.BG).pack(anchor="w", pady=(3, 0))
+
     try:
         folha_version = folha.module().APP_VERSION
         energia_version = energia.module().APP_VERSION
     except Exception:
         folha_version = energia_version = "?"
-    _kv(box, (
+
+    cards = tk.Frame(inner, bg=t.BG)
+    cards.pack(fill="both", expand=True)
+    cards.columnconfigure(0, weight=3, uniform="about")
+    cards.columnconfigure(1, weight=2, uniform="about")
+
+    def card_header(parent, text, icon_name):
+        row = tk.Frame(parent, bg=t.SURFACE)
+        row.pack(fill="x")
+        image = self._icon(icon_name, 24)
+        if image:
+            tk.Label(row, image=image, bg=t.SURFACE).pack(side="left", padx=(0, 8))
+        t.label(row, text, 11, t.PRIMARY_DARK, True).pack(side="left", anchor="w")
+        tk.Frame(parent, bg=t.BORDER, height=1).pack(fill="x", pady=(8, 12))
+
+    info = t.card(cards, padding=16)
+    info.grid(row=0, column=0, sticky="nsew", padx=(0, 7), pady=(0, 8))
+    card_header(info, APP_NAME, "sobre")
+
+    details = tk.Frame(info, bg=t.SURFACE)
+    details.pack(fill="x")
+    detail_rows = (
         ("Versão", APP_VERSION),
-        ("Empresa", "FTS DISTRIBUIDORA DE PEÇAS LTDA"),
-        ("Módulos", f"Folha de Pagamento {folha_version} • Energia e Água {energia_version}"),
+        ("Desenvolvido por", "Jorge Alberto de Paula"),
+        ("Empresa", "FTS Distribuidora de Peças Ltda."),
+        ("Módulos", f"Folha de Pagamento {folha_version} · Energia e Água {energia_version}"),
+    )
+    detail_values = []
+    for index, (name, value) in enumerate(detail_rows):
+        cell = tk.Frame(details, bg=t.SURFACE)
+        cell.grid(row=index // 2, column=index % 2, sticky="nw", padx=(0, 12), pady=(0, 14))
+        details.columnconfigure(index % 2, weight=1, uniform="details")
+        t.label(cell, name, 9, t.MUTED, bg=t.SURFACE).pack(anchor="w", pady=(0, 4))
+        value_label = t.label(cell, value, 10, t.TEXT, True, bg=t.SURFACE,
+                              wraplength=260, justify="left", anchor="w")
+        value_label.pack(anchor="w")
+        detail_values.append(value_label)
+
+    callout = tk.Frame(info, bg=t.SURFACE_ALT, highlightbackground=t.BORDER, highlightthickness=1,
+                       padx=11, pady=9)
+    callout.pack(fill="x", pady=(2, 0))
+    callout_label = t.label(
+        callout,
+        "Folha de Pagamento e Energia e Água funcionam dentro desta janela, com os mesmos bancos "
+        "de dados e regras dos programas anteriores, que continuam disponíveis para reversão.",
+        9, t.MUTED, bg=t.SURFACE_ALT, wraplength=520, justify="left",
+    )
+    callout_label.pack(anchor="w")
+
+    technical = t.card(cards, padding=16)
+    technical.grid(row=0, column=1, sticky="nsew", padx=(7, 0), pady=(0, 8))
+    card_header(technical, "Informações técnicas", "painel")
+
+    module_rows = (
+        ("folha", "Folha de Pagamento", folha_version),
+        ("energia", "Energia e Água", energia_version),
+    )
+    for icon_name, name, version in module_rows:
+        row = tk.Frame(technical, bg=t.SURFACE)
+        row.pack(fill="x", pady=(0, 5))
+        image = self._icon(icon_name, 24)
+        if image:
+            tk.Label(row, image=image, bg=t.SURFACE).pack(side="left", padx=(0, 8))
+        labels = tk.Frame(row, bg=t.SURFACE)
+        labels.pack(side="left", fill="x", expand=True)
+        t.label(labels, name, 9, t.TEXT, True).pack(anchor="w")
+        t.label(labels, f"Módulo integrado · versão {version}", 8, t.MUTED).pack(anchor="w", pady=(2, 0))
+        t.label(row, "Integrado", 8, t.PRIMARY_DARK, True, bg=t.HOVER,
+                padx=7, pady=3).pack(side="right", padx=(6, 0))
+
+    tk.Frame(technical, bg=t.BORDER, height=1).pack(fill="x", pady=(8, 10))
+    technical_rows = (
         ("Programa", str(paths.program_dir())),
         ("Dados do sistema", str(paths.app_data_dir())),
         ("Backup legado da Folha (MEGA)", str(getattr(folha.module(), "AUTO_BACKUP_DIR", "—"))),
         ("Backup automático de Energia e Água (MEGA)", str(energia.exit_backup_path())),
-    ))
-    t.label(box, "Folha de Pagamento e Energia e Água funcionam dentro desta janela, com os mesmos bancos de "
-            "dados e regras dos programas anteriores, que continuam disponíveis para reversão.", 9, t.MUTED,
-            wraplength=760, justify="left").pack(anchor="w", pady=(10, 0))
+    )
+    path_values = []
+    for name, value in technical_rows:
+        section = tk.Frame(technical, bg=t.SURFACE)
+        section.pack(fill="x", pady=(0, 8))
+        t.label(section, name, 8, t.MUTED, bg=t.SURFACE).pack(anchor="w", pady=(0, 2))
+        value_label = t.label(section, value, 8, t.TEXT, bg=t.SURFACE,
+                              wraplength=420, justify="left", anchor="w")
+        value_label.pack(fill="x", anchor="w")
+        path_values.append((section, value_label))
+
+    def resize_content(event):
+        cards_width = event.width
+        if cards_width >= 760:
+            info.grid_configure(row=0, column=0, columnspan=1, padx=(0, 7))
+            technical.grid_configure(row=0, column=1, columnspan=1, padx=(7, 0))
+        else:
+            info.grid_configure(row=0, column=0, columnspan=2, padx=0)
+            technical.grid_configure(row=1, column=0, columnspan=2, padx=0)
+
+    def resize_info(event):
+        column_width = max(100, event.width // 2 - 20)
+        for value_label in detail_values:
+            value_label.configure(wraplength=column_width)
+
+    def resize_callout(event):
+        callout_label.configure(wraplength=max(100, event.width - 26))
+
+    def resize_technical(event):
+        for section, value_label in path_values:
+            value_label.configure(wraplength=max(100, section.winfo_width() - 2))
+
+    cards.bind("<Configure>", resize_content, add="+")
+    details.bind("<Configure>", resize_info, add="+")
+    callout.bind("<Configure>", resize_callout, add="+")
+    technical.bind("<Configure>", resize_technical, add="+")
