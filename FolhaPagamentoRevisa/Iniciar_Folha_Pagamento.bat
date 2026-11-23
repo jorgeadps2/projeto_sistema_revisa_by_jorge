@@ -1,6 +1,10 @@
 @echo off
 setlocal
 cd /d "%~dp0"
+if exist "%~dp0FolhaPagamentoRevisa_1_141.exe" (
+  "%~dp0FolhaPagamentoRevisa_1_141.exe"
+  exit /b
+)
 if exist "%~dp0FolhaPagamentoRevisa_1_140.exe" (
   "%~dp0FolhaPagamentoRevisa_1_140.exe"
   exit /b

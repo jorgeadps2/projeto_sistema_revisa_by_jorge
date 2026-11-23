@@ -206,10 +206,13 @@ def accounting_pdf_initial_directory():
     return DATA_DIR
 
 
-def accounting_pdf_selection_defaults(year,month):
+def accounting_pdf_selection_defaults(year,month,field='salary'):
+    if field not in ('salary','thirteenth'):
+        raise ValueError('Tipo de importação de PDF contábil inválido.')
+    table='payroll_thirteenth_reports' if field=='thirteenth' else 'payroll_accounting_reports'
     with connect() as con:
         report=con.execute(
-            'SELECT path FROM payroll_accounting_reports WHERE year=? AND month=?',
+            f'SELECT path FROM {table} WHERE year=? AND month=?',
             (year,month)).fetchone()
     if report and report['path'] and os.path.isfile(report['path']):
         return os.path.dirname(report['path']),os.path.basename(report['path'])
@@ -429,11 +432,27 @@ def store_accounting_report(con,year,month,path):
         (year,month,os.path.abspath(path),pdf_data))
 
 
-def cached_accounting_report(year,month,pdf_data):
+def store_thirteenth_accounting_report(con,year,month,path):
+    with open(path,'rb') as source:
+        pdf_data=source.read()
+    if not pdf_data.startswith(b'%PDF-'):
+        raise ValueError(f'O relatório contábil não é um PDF válido: {path}')
+    stored=con.execute(
+        'SELECT pdf_data FROM payroll_thirteenth_reports WHERE year=? AND month=?',
+        (year,month)).fetchone()
+    if stored is not None and stored['pdf_data']==pdf_data:
+        return
+    con.execute('''INSERT OR REPLACE INTO payroll_thirteenth_reports(
+        year,month,path,pdf_data,updated_at) VALUES(?,?,?,?,CURRENT_TIMESTAMP)''',
+        (year,month,os.path.abspath(path),pdf_data))
+
+
+def cached_accounting_report(year,month,pdf_data,field='salary'):
     digest=hashlib.sha256(pdf_data).hexdigest()
     folder=os.path.join(DATA_DIR,'PDFs contabeis')
     os.makedirs(folder,exist_ok=True)
-    path=os.path.join(folder,f'{year}_{month:02d}_{digest}.pdf')
+    suffix='_13_salario' if field=='thirteenth' else ''
+    path=os.path.join(folder,f'{year}_{month:02d}{suffix}_{digest}.pdf')
     if os.path.isfile(path):
         with open(path,'rb') as cached:
             if hashlib.sha256(cached.read()).hexdigest()==digest:
@@ -466,6 +485,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS payrolls(id INTEGER PRIMARY KEY AUTOINCREMENT,year INTEGER NOT NULL,month INTEGER NOT NULL,status TEXT NOT NULL DEFAULT 'Em revisão',notes TEXT DEFAULT '',created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,UNIQUE(year,month));
         CREATE TABLE IF NOT EXISTS payroll_items(id INTEGER PRIMARY KEY AUTOINCREMENT,payroll_id INTEGER NOT NULL REFERENCES payrolls(id) ON DELETE CASCADE,employee_id INTEGER NOT NULL REFERENCES employees(id),salary REAL NOT NULL DEFAULT 0,pf REAL NOT NULL DEFAULT 0,overtime REAL NOT NULL DEFAULT 0,vacation REAL NOT NULL DEFAULT 0,meta REAL NOT NULL DEFAULT 0,marmitex REAL NOT NULL DEFAULT 0,advances REAL NOT NULL DEFAULT 0,pharmacy REAL NOT NULL DEFAULT 0,other_deductions REAL NOT NULL DEFAULT 0,loan REAL NOT NULL DEFAULT 0,total REAL NOT NULL DEFAULT 0,original_total REAL,source TEXT NOT NULL DEFAULT 'Manual',notes TEXT DEFAULT '',UNIQUE(payroll_id,employee_id));
         CREATE TABLE IF NOT EXISTS payroll_accounting_reports(year INTEGER NOT NULL,month INTEGER NOT NULL,path TEXT NOT NULL,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,PRIMARY KEY(year,month));
+        CREATE TABLE IF NOT EXISTS payroll_thirteenth_reports(year INTEGER NOT NULL,month INTEGER NOT NULL,path TEXT NOT NULL,pdf_data BLOB,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,PRIMARY KEY(year,month));
         CREATE TABLE IF NOT EXISTS employee_loans(id INTEGER PRIMARY KEY AUTOINCREMENT,employee_id INTEGER NOT NULL REFERENCES employees(id),principal REAL NOT NULL,installment_count INTEGER NOT NULL,start_year INTEGER NOT NULL,start_month INTEGER NOT NULL,notes TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
         CREATE TABLE IF NOT EXISTS employee_loan_adjustments(id INTEGER PRIMARY KEY AUTOINCREMENT,loan_id INTEGER NOT NULL REFERENCES employee_loans(id) ON DELETE CASCADE,principal REAL NOT NULL,installment_count INTEGER NOT NULL,start_year INTEGER NOT NULL,start_month INTEGER NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,UNIQUE(loan_id,start_year,start_month));
         CREATE TABLE IF NOT EXISTS employee_meta_entries(id INTEGER PRIMARY KEY AUTOINCREMENT,employee_id INTEGER NOT NULL REFERENCES employees(id),entry_date TEXT NOT NULL,amount REAL NOT NULL CHECK(amount>0),notes TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
@@ -1247,6 +1267,9 @@ class FolhaBase:
         st.configure('CardValue.TLabel',font=('Segoe UI Semibold',21),foreground=NAVY,background=WHITE)
         st.configure('PageHeading.TLabel',font=('Segoe UI Semibold',14),foreground=NAVY,background=BG)
         self._apply_dark_theme(st)
+        if getattr(self,'centralized_actions',False):
+            from revisa_integrado.ui.action_layout import configure_module_actions
+            configure_module_actions(st)
         if getattr(self,'compact_layout',False):
             st.configure('Title.TLabel',font=('Segoe UI Semibold',16))
             st.configure('PageHeading.TLabel',font=('Segoe UI Semibold',12))
@@ -1255,6 +1278,16 @@ class FolhaBase:
             st.configure('Treeview.Heading',padding=4)
             for name in ('Toolbar.TButton','ToolbarSelected.TButton'):
                 st.configure(name,padding=(6,3))
+        if getattr(self,'centralized_actions',False):
+            from revisa_integrado.ui import theme as ui
+            for name in ('Title.TLabel','PageHeading.TLabel','Sub.TLabel','CardValue.TLabel'):
+                on_card=name=='CardValue.TLabel'
+                st.configure(f'FolhaPanel.{name}',font=st.lookup(name,'font'),
+                             background=ui.SURFACE if on_card else ui.PAPER,
+                             foreground=ui.MUTED if name=='Sub.TLabel' else ui.NAVY)
+            st.configure('FolhaPanel.Treeview.Heading',background=ui.PAPER,
+                         foreground=ui.NAVY,bordercolor=ui.PAPER_BORDER,
+                         lightcolor=ui.PAPER_BORDER,darkcolor=ui.PAPER_BORDER)
 
     def _apply_dark_theme(self,st):
         # Estrutura escura; tabelas, campos e cartões continuam claros para leitura dos dados.
@@ -1308,7 +1341,8 @@ class FolhaBase:
         self.option_add('*TCombobox*Listbox.selectForeground',TEXT)
 
     def _build(self):
-        toolbar=ttk.Frame(self,style='Toolbar.TFrame',padding=(8,6))
+        integrated=getattr(self,'centralized_actions',False)
+        toolbar=ttk.Frame(self,style='ModuleNav.TFrame' if integrated else 'Toolbar.TFrame',padding=(8,6))
         self.navigation_toolbar=toolbar
         toolbar.pack(fill='x')
         self.navigation_buttons={}
@@ -1321,7 +1355,7 @@ class FolhaBase:
             navigation.append(('about','Sobre'))
         for section,label in navigation:
             button=ttk.Button(
-                toolbar,text=label,style='Toolbar.TButton',
+                toolbar,text=label,style=self._navigation_style(False),
                 command=lambda name=section:self.navigate(name))
             button.pack(side='left',padx=2)
             self.navigation_buttons[section]=button
@@ -1353,25 +1387,27 @@ class FolhaBase:
         content=ttk.Frame(self,padding=(8,6))
         self.main_content=content
         content.pack(fill='both',expand=True)
-        titlebar=ttk.Frame(content)
+        titlebar=ttk.Frame(content,style='ModuleNav.TFrame' if integrated else 'TFrame')
         self.titlebar=titlebar
         titlebar.pack(fill='x',pady=(0,8))
-        logo_card=tk.Frame(
-            titlebar,bg=WHITE,highlightbackground='#dbe3ee',
-            highlightthickness=1,padx=6,pady=3)
-        with Image.open(resource_path('logo_revisa.png')) as logo_source:
-            logo_source.thumbnail((96,52),Image.Resampling.LANCZOS)
-            self.dashboard_logo_image=ImageTk.PhotoImage(
-                logo_source.copy(),master=self)
-        self.dashboard_logo_label=tk.Label(logo_card,image=self.dashboard_logo_image,bg=WHITE)
-        self.dashboard_logo_label.pack()
-        with Image.open(resource_path('logo_revisa.png')) as logo_source:
-            logo_source.thumbnail((64,34),Image.Resampling.LANCZOS)
-            self.compact_dashboard_logo_image=ImageTk.PhotoImage(
-                logo_source.copy(),master=self)
-        self.dashboard_logo_card=logo_card
-        self.dashboard_logo_card.pack(side='left',padx=(0,12))
-        self.page_title=ttk.Label(titlebar,text='Painel de controle',style='Title.TLabel')
+        if not integrated:
+            logo_card=tk.Frame(
+                titlebar,bg=WHITE,highlightbackground='#dbe3ee',
+                highlightthickness=1,padx=6,pady=3)
+            with Image.open(resource_path('logo_revisa.png')) as logo_source:
+                logo_source.thumbnail((96,52),Image.Resampling.LANCZOS)
+                self.dashboard_logo_image=ImageTk.PhotoImage(
+                    logo_source.copy(),master=self)
+            self.dashboard_logo_label=tk.Label(logo_card,image=self.dashboard_logo_image,bg=WHITE)
+            self.dashboard_logo_label.pack()
+            with Image.open(resource_path('logo_revisa.png')) as logo_source:
+                logo_source.thumbnail((64,34),Image.Resampling.LANCZOS)
+                self.compact_dashboard_logo_image=ImageTk.PhotoImage(
+                    logo_source.copy(),master=self)
+            self.dashboard_logo_card=logo_card
+            self.dashboard_logo_card.pack(side='left',padx=(0,12))
+        self.page_title=ttk.Label(titlebar,text='Painel de controle',
+                                  style='FolhaPanel.Title.TLabel' if integrated else 'Title.TLabel')
         self.page_title.pack(side='left',pady=8)
         scroll_host=ScrollableHost(content)
         scroll_host.pack(fill='both',expand=True)
@@ -1383,7 +1419,8 @@ class FolhaBase:
                 self.page_host,
                 lambda:self.current_page.pack_forget(),
                 lambda:self.current_page.pack(fill='both',expand=True))
-        self.dashboard_tab=ttk.Frame(self.page_host,padding=14)
+        self.dashboard_tab=ttk.Frame(self.page_host,padding=14,
+                                      style='ModuleNav.TFrame' if integrated else 'TFrame')
         self.payroll_tab=ttk.Frame(self.page_host,padding=12)
         self.employees_tab=ttk.Frame(self.page_host,padding=12)
         self.salaries_tab=ttk.Frame(self.page_host,padding=12)
@@ -1423,7 +1460,7 @@ class FolhaBase:
         self.current_section=section
         self.current_page,self_title=pages[section]
         self.current_page.pack(fill='both',expand=True)
-        if section!='dashboard':
+        if section!='dashboard' and not getattr(self,'centralized_actions',False):
             self.dashboard_logo_card.pack_forget()
         self.page_title.configure(text=self_title)
         # O conteúdo da seção anterior pode ter deixado a área maior; recalcula as barras de rolagem.
@@ -1432,21 +1469,25 @@ class FolhaBase:
             self.refresh_loans()
         for key,button in self.navigation_buttons.items():
             selected=key==section
-            button.configure(style='ToolbarSelected.TButton' if selected else 'Toolbar.TButton')
+            button.configure(style=self._navigation_style(selected))
+
+    def _navigation_style(self,selected):
+        if not getattr(self,'centralized_actions',False):
+            return 'ToolbarSelected.TButton' if selected else 'Toolbar.TButton'
+        prefix='Compact.' if self.compact_layout else ''
+        return prefix+('ModuleSelected.TButton' if selected else 'ModuleNav.TButton')
 
     def update_signing_expiry_notice(self):
         if not getattr(self,'centralized_actions',False):
             return
         notice,status,_when=self.signing_status_callback()
+        background,foreground='#B42318','#FFFFFF'
         if status=='ok':
             text=f'Assinatura válida até {_when}'
-            background,foreground='#ECFDF3','#067647'
         elif status=='expired':
             text=f'ATENÇÃO: assinatura venceu em {_when}'
-            background,foreground='#FEF3F2','#B42318'
         elif status=='warning':
             text=f'ATENÇÃO: assinatura vence em {notice.split(" em ",1)[1].split(" (",1)[0]}'
-            background,foreground='#FFF7ED','#9A3412'
         else:
             text='Assinatura: validade indisponível'
             background,foreground='#F3F4F6','#667085'
@@ -1476,18 +1517,33 @@ class FolhaBase:
 
     def _build_dashboard(self):
         wrap=self.dashboard_tab
-        topbar=ttk.Frame(wrap)
+        integrated=getattr(self,'centralized_actions',False)
+        if integrated:
+            from revisa_integrado.ui import theme as ui
+            border,ink,muted=ui.PAPER_BORDER,ui.NAVY,ui.MUTED
+            accents=(ui.YELLOW,ui.YELLOW,ui.NAVY,ui.NAVY)
+            icon_backgrounds=('#fff5cc','#fff5cc','#eef1f5','#eef1f5')
+        else:
+            border,ink,muted='#dbe3ee',NAVY,MUTED
+            accents=(BLUE,BLUE,GREEN,GREEN)
+            icon_backgrounds=('#eff6ff','#eff6ff','#ecfdf5','#ecfdf5')
+        frame_style=wrap.cget('style')
+        prefix='FolhaPanel.' if integrated else ''
+        topbar=ttk.Frame(wrap,style=frame_style)
         self.dashboard_topbar=topbar
         topbar.pack(fill='x',pady=(0,10))
-        ttk.Label(topbar,text='Visão geral da folha',style='PageHeading.TLabel').pack(side='left')
-        self.dashboard_period=ttk.Label(topbar,text='',style='Sub.TLabel')
+        ttk.Label(topbar,text='Visão geral da folha',style=prefix+'PageHeading.TLabel').pack(side='left')
+        self.dashboard_period=ttk.Label(topbar,text='',style=prefix+'Sub.TLabel')
         self.dashboard_period.pack(side='right',padx=(8,0))
-        quick=ttk.Frame(wrap)
-        self.dashboard_quick_actions=quick
-        quick.pack(fill='x',pady=(0,12))
-        ttk.Button(quick,text='Abrir folha mensal',style='Accent.TButton',command=lambda:self.navigate('payroll')).pack(side='left',padx=(0,8))
-        ttk.Button(quick,text='Colaboradores',style='Secondary.TButton',command=lambda:self.navigate('employees')).pack(side='left',padx=(0,8))
-        cards=ttk.Frame(wrap); cards.pack(fill='x',pady=(0,14))
+        if not integrated:
+            quick=ttk.Frame(wrap)
+            self.dashboard_quick_actions=quick
+            quick.pack(fill='x',pady=(0,12))
+            ttk.Button(quick,text='Abrir folha mensal',style='Accent.TButton',
+                      command=lambda:self.navigate('payroll')).pack(side='left',padx=(0,8))
+            ttk.Button(quick,text='Colaboradores',style='Secondary.TButton',
+                      command=lambda:self.navigate('employees')).pack(side='left',padx=(0,8))
+        cards=ttk.Frame(wrap,style=frame_style); cards.pack(fill='x',pady=(0,14))
         self.dashboard_cards=cards
         self.card_values=[]
         self.card_titles=[]
@@ -1500,39 +1556,40 @@ class FolhaBase:
             ('◷','Folhas em revisão no ano'),
         ]
         for index,(icon,title) in enumerate(card_data):
-            f=tk.Frame(cards,bg=WHITE,highlightbackground='#dbe3ee',highlightthickness=1)
+            f=tk.Frame(cards,bg=WHITE,highlightbackground=border,highlightthickness=1)
             f.pack(side='left',fill='both',expand=True,padx=(0,10 if index<len(card_data)-1 else 0))
-            accent=BLUE if index in (0,1) else GREEN
+            accent=accents[index]
             tk.Frame(f,bg=accent,height=3).pack(fill='x')
             icon_label=tk.Label(
-                f,text=icon,bg='#eff6ff' if index in (0,1) else '#ecfdf5',
-                fg=accent,font=('Segoe UI Semibold',11),width=4
+                f,text=icon,bg=icon_backgrounds[index],
+                fg=ink if integrated else accent,font=('Segoe UI Semibold',11),width=4
             )
             icon_label.pack(anchor='w',padx=12,pady=(9,4))
             self.card_icons.append(icon_label)
-            title_label=tk.Label(f,text=title,bg=WHITE,fg=MUTED,font=('Segoe UI Semibold',9))
+            title_label=tk.Label(f,text=title,bg=WHITE,fg=ink if integrated else muted,
+                                 font=('Segoe UI Semibold',10 if integrated else 9))
             title_label.pack(anchor='w',padx=14,pady=(0,1))
-            v=ttk.Label(f,text='—',style='CardValue.TLabel')
+            v=ttk.Label(f,text='—',style=prefix+'CardValue.TLabel')
             v.pack(anchor='w',padx=14,pady=(0,0))
-            hint=tk.Label(f,text='',bg=WHITE,fg=MUTED,font=('Segoe UI',8))
+            hint=tk.Label(f,text='',bg=WHITE,fg=muted,font=('Segoe UI',9 if integrated else 8))
             hint.pack(anchor='w',padx=14,pady=(0,9))
             self.card_titles.append(title_label)
             self.card_values.append(v)
             self.card_hints.append(hint)
-        summary=ttk.Frame(wrap); summary.pack(fill='x',pady=(0,14))
+        summary=ttk.Frame(wrap,style=frame_style); summary.pack(fill='x',pady=(0,14))
         self.dashboard_summary=summary
-        closed_card=tk.Frame(summary,bg=WHITE,highlightbackground='#dbe3ee',highlightthickness=1)
+        closed_card=tk.Frame(summary,bg=WHITE,highlightbackground=border,highlightthickness=1)
         closed_card.pack(side='left',fill='y',padx=(0,12))
-        tk.Frame(closed_card,bg=GREEN,height=3).pack(fill='x')
+        tk.Frame(closed_card,bg=ink if integrated else GREEN,height=3).pack(fill='x')
         self.closed_title=tk.Label(closed_card,text='Total anual das folhas fechadas',bg=WHITE,fg=MUTED,font=('Segoe UI Semibold',9))
         self.closed_title.pack(anchor='w',padx=14,pady=(10,1))
-        self.closed_total=ttk.Label(closed_card,text='—',style='CardValue.TLabel')
+        self.closed_total=ttk.Label(closed_card,text='—',style=prefix+'CardValue.TLabel')
         self.closed_total.pack(anchor='w',padx=14)
         self.closed_hint=tk.Label(closed_card,text='',bg=WHITE,fg=MUTED,font=('Segoe UI',8),justify='left')
         self.closed_hint.pack(anchor='w',padx=14,pady=(0,10))
-        review_card=tk.Frame(summary,bg=WHITE,highlightbackground='#dbe3ee',highlightthickness=1)
+        review_card=tk.Frame(summary,bg=WHITE,highlightbackground=border,highlightthickness=1)
         review_card.pack(side='left',fill='both',expand=True)
-        tk.Frame(review_card,bg='#f59e0b',height=3).pack(fill='x')
+        tk.Frame(review_card,bg=accents[0] if integrated else '#f59e0b',height=3).pack(fill='x')
         review_head=tk.Frame(review_card,bg=WHITE)
         review_head.pack(fill='x',padx=14,pady=(8,2))
         self.review_title=tk.Label(review_head,text='Folhas em revisão (falta fechar)',bg=WHITE,fg=MUTED,font=('Segoe UI Semibold',9))
@@ -1541,7 +1598,8 @@ class FolhaBase:
         self.review_total.pack(side='right')
         review_body=tk.Frame(review_card,bg=WHITE)
         review_body.pack(fill='both',expand=True,padx=10,pady=(0,8))
-        self.review_tree=ttk.Treeview(review_body,columns=('period','status','net'),show='headings',height=3)
+        self.review_tree=ttk.Treeview(review_body,columns=('period','status','net'),show='headings',height=3,
+                                      style=prefix+'Treeview')
         for column,heading,width,anchor in (('period','Competência',160,'w'),('status','Situação',120,'w'),('net','Valor líquido',140,'e')):
             self.review_tree.heading(column,text=heading)
             self.review_tree.column(column,width=width,anchor=anchor)
@@ -1549,7 +1607,7 @@ class FolhaBase:
         self.review_tree.configure(yscrollcommand=review_scroll.set)
         self.review_tree.pack(side='left',fill='both',expand=True)
         review_scroll.pack(side='right',fill='y')
-        charts=ttk.Frame(wrap)
+        charts=ttk.Frame(wrap,style=frame_style)
         charts.pack(fill='both',expand=True)
         self.dashboard_chart_data=[]
         self.dashboard_charts=[]
@@ -1559,14 +1617,14 @@ class FolhaBase:
             ('Total líquido por mês','net'),
             ('Colaboradores lançados por mês','people'),
         )):
-            chart_card=tk.Frame(charts,bg=WHITE,highlightbackground='#dbe3ee',highlightthickness=1)
+            chart_card=tk.Frame(charts,bg=WHITE,highlightbackground=border,highlightthickness=1)
             chart_card.pack(side='left',fill='both',expand=True,padx=(0,12 if index==0 else 0))
-            tk.Frame(chart_card,bg='#e7edf5',height=1).pack(side='bottom',fill='x')
-            title_label=tk.Label(chart_card,text=title,bg=WHITE,fg=NAVY,font=('Segoe UI Semibold',11))
+            tk.Frame(chart_card,bg=border if integrated else '#e7edf5',height=1).pack(side='bottom',fill='x')
+            title_label=tk.Label(chart_card,text=title,bg=WHITE,fg=ink,font=('Segoe UI Semibold',11))
             title_label.pack(anchor='w',padx=16,pady=(13,1))
             subtitle_label=tk.Label(
                 chart_card,text='Acompanhamento das 12 competências do ano',
-                bg=WHITE,fg=MUTED,font=('Segoe UI',8))
+                bg=WHITE,fg=muted,font=('Segoe UI',9 if integrated else 8))
             subtitle_label.pack(anchor='w',padx=16)
             canvas=tk.Canvas(chart_card,bg=WHITE,highlightthickness=0,height=200)
             canvas.pack(fill='both',expand=True,padx=10,pady=(4,8))
@@ -1578,7 +1636,7 @@ class FolhaBase:
     def _tab_action_layout(self,parent):
         parent.configure(padding=(8,0,8,8))
         if getattr(self,'centralized_actions',False):
-            actions=ttk.Frame(parent,padding=(0,4))
+            actions=ttk.Frame(parent,style='ModuleNav.TFrame',padding=(0,4))
             actions._action_title={
                 self.payroll_tab:'Folha mensal',self.employees_tab:'Colaboradores',
                 self.salaries_tab:'Salários',self.loans_tab:'Proventos / Descontos'
@@ -1614,7 +1672,7 @@ class FolhaBase:
 
     def _tab_reports(self,parent,entries,style='Report.TButton'):
         if getattr(self,'centralized_actions',False):
-            group=ttk.Frame(parent)
+            group=ttk.Frame(parent,style='ModuleNav.TFrame')
             group._action_title='Relatórios'
             group.pack(side='left',padx=(6,0))
         else:
@@ -1773,10 +1831,15 @@ class FolhaBase:
             button.action_icon=ImageTk.PhotoImage(
                 image.resize((18,18),Image.Resampling.LANCZOS),master=button)
             button.configure(image=button.action_icon,compound='left')
-        if getattr(self,'centralized_actions',False) and actions.cget('style')!='Toolbar.TFrame':
+        if getattr(self,'centralized_actions',False) and actions is not self.navigation_toolbar:
             from revisa_integrado.ui.action_layout import group_actions
             label='Relatórios' if isinstance(actions,ttk.LabelFrame) else getattr(actions,'_action_title','Ações')
-            group_actions(actions,label)
+            primary={
+                'Folha mensal':'Editar lançamento',
+                'Colaboradores':'Novo colaborador',
+                'Salários':'Salário / reajustes',
+            }.get(label)
+            group_actions(actions,label,primary=primary)
 
     def _build_payroll(self):
         actions,content=self._tab_action_layout(self.payroll_tab)
@@ -1797,6 +1860,11 @@ class FolhaBase:
         ttk.Button(
             actions,text='DP - Antares',style='ImportPdf.TButton',
             command=self.import_accounting_pdf_dialog).pack(fill='x',pady=(0,6))
+        self.thirteenth_import_button=ttk.Button(
+            actions,text='13º - Antares',style='ImportPdf.TButton',
+            command=lambda:self.import_accounting_pdf_dialog('thirteenth'),
+            state='disabled')
+        self.thirteenth_import_button.pack(fill='x',pady=(0,6))
         self.payroll_status_button=ttk.Button(actions,text='Fechar folha',style='ClosePayroll.TButton',command=self.toggle_status)
         self.payroll_status_button.pack(fill='x',pady=(0,6))
         share_row=actions
@@ -2288,6 +2356,13 @@ class FolhaBase:
         values=[float(row[kind] or 0) for row in data]
         slot=plot_width/12
         selected_month=getattr(self,'dashboard_selected_month',0)
+        if getattr(self,'centralized_actions',False):
+            from revisa_integrado.ui import theme as ui
+            selected,bar,grid,area,line,month=ui.YELLOW,ui.NAVY_HOVER,ui.PAPER_BORDER,ui.PAPER,ui.NAVY_HOVER,ui.NAVY
+            zero_bar=ui.PAPER_BORDER
+        else:
+            selected,bar,grid,area,line,month=BLUE,'#60a5fa','#e8eef5','#eff6ff','#0f766e',BLUE
+            zero_bar='#dbe5ef'
         if kind=='net':
             min_value=min(0,min(values))
             max_value=max(0,max(values))
@@ -2298,7 +2373,7 @@ class FolhaBase:
             for step in range(5):
                 value=max_value-(max_value-min_value)*step/4
                 y=top+plot_height*step/4
-                canvas.create_line(left,y,right,y,fill='#e8eef5',dash=(2,3))
+                canvas.create_line(left,y,right,y,fill=grid,dash=(2,3))
                 canvas.create_text(
                     left-8,y,text=self._dashboard_money_axis_label(value),
                     anchor='e',fill=MUTED,font=('Segoe UI',8))
@@ -2308,7 +2383,7 @@ class FolhaBase:
             for index,(row,value) in enumerate(zip(data,values)):
                 x=left+slot*(index+0.5)
                 y=top+plot_height*(max_value-value)/span
-                color=BLUE if row['month']==selected_month else ('#dbe5ef' if value==0 else '#60a5fa')
+                color=selected if row['month']==selected_month else (zero_bar if value==0 else bar)
                 canvas.create_rectangle(
                     x-bar_width/2,min(y,zero_y),x+bar_width/2,max(y,zero_y),
                     fill=color,outline='')
@@ -2319,7 +2394,7 @@ class FolhaBase:
                         fill=NAVY,font=('Segoe UI Semibold',7))
                 canvas.create_text(
                     x,bottom+19,text=MONTHS[row['month']-1][:3],
-                    fill=BLUE if row['month']==selected_month else MUTED,
+                    fill=month if row['month']==selected_month else MUTED,
                     font=('Segoe UI Semibold' if row['month']==selected_month else 'Segoe UI',8))
         else:
             maximum=max(0,max(values))
@@ -2331,26 +2406,26 @@ class FolhaBase:
                 y=bottom-plot_height*value/scale_top
                 points.append((x,y,row['month'],int(value)))
             if points:
-                area=[left,bottom]
+                polygon=[left,bottom]
                 for x,y,_,_ in points:
-                    area.extend((x,y))
-                area.extend((right,bottom))
-                canvas.create_polygon(*area,fill='#eff6ff',outline='')
+                    polygon.extend((x,y))
+                polygon.extend((right,bottom))
+                canvas.create_polygon(*polygon,fill=area,outline='')
             for step in range(5):
                 value=scale_top-step*tick
                 y=top+plot_height*step/4
-                canvas.create_line(left,y,right,y,fill='#e8eef5',dash=(2,3))
+                canvas.create_line(left,y,right,y,fill=grid,dash=(2,3))
                 canvas.create_text(left-8,y,text=f'{value:d}',anchor='e',fill=MUTED,font=('Segoe UI',8))
             for x,_,point_month,_ in points:
                 canvas.create_text(
                     x,bottom+19,text=MONTHS[point_month-1][:3],
-                    fill=BLUE if point_month==selected_month else MUTED,
+                    fill=month if point_month==selected_month else MUTED,
                     font=('Segoe UI Semibold' if point_month==selected_month else 'Segoe UI',8))
             if len(points)>=2:
                 line_points=[coordinate for x,y,_,_ in points for coordinate in (x,y)]
-                canvas.create_line(*line_points,fill='#0f766e',width=3,smooth=True)
+                canvas.create_line(*line_points,fill=line,width=3,smooth=True)
             for x,y,point_month,value in points:
-                dot_color=BLUE if point_month==selected_month else '#0f766e'
+                dot_color=selected if point_month==selected_month else line
                 canvas.create_oval(x-5,y-5,x+5,y+5,fill=WHITE,outline=dot_color,width=2)
                 if value:
                     canvas.create_text(
@@ -2730,9 +2805,16 @@ class FolhaBase:
             return
         self.employee_salary_dialog(int(selection[0]))
 
-    def save_accounting_pdf_values(self,year,month,entries,source_path=None):
+    def save_accounting_pdf_values(
+            self,year,month,entries,source_path=None,field='salary'):
+        if field not in ('salary','thirteenth'):
+            raise ValueError('Tipo de importação de PDF contábil inválido.')
+        if field=='thirteenth' and month not in (11,12):
+            raise ValueError('O 13º salário só pode ser importado nas folhas de novembro e dezembro.')
         if not entries:
             raise ValueError('Selecione pelo menos um funcionário.')
+        field_label='13º salário' if field=='thirteenth' else 'salário'
+        previous_field=f'previous_{field}'
         with connect() as con:
             payroll=con.execute(
                 'SELECT * FROM payrolls WHERE year=? AND month=?',(year,month)).fetchone()
@@ -2750,24 +2832,35 @@ class FolhaBase:
                     WHERE i.payroll_id=? AND i.employee_id=?''',(payroll['id'],employee_id)).fetchone()
                 if item is None:
                     raise ValueError('Funcionário sem lançamento nesta folha.')
-                if item['salary']!=entry['previous_salary']:
-                    raise ValueError('O salário foi alterado após a conferência. Reabra a importação.')
+                if item[field]!=entry[previous_field]:
+                    raise ValueError(f'O campo {field_label} foi alterado após a conferência. Reabra a importação.')
                 values=dict(item)
-                values['salary']=round(amount,2)
-                con.execute('UPDATE payroll_items SET salary=?,total=?,source=? WHERE id=?',(
-                    values['salary'],calc_total(values),'PDF contábil',item['id']))
+                values[field]=round(amount,2)
+                con.execute(f'UPDATE payroll_items SET {field}=?,total=?,source=? WHERE id=?',(
+                    values[field],calc_total(values),'PDF contábil',item['id']))
                 con.execute('INSERT INTO audit_log(action,details) VALUES(?,?)',(
                     'Importação local de PDF contábil',
-                    f'{item["name"]} - {month:02d}/{year}: salário {brl(item["salary"])} para {brl(amount)}'))
+                    f'{item["name"]} - {month:02d}/{year}: {field_label} {brl(item[field])} para {brl(amount)}'))
             if source_path:
-                store_accounting_report(con,year,month,source_path)
+                if field=='thirteenth':
+                    store_thirteenth_accounting_report(con,year,month,source_path)
+                else:
+                    store_accounting_report(con,year,month,source_path)
         return len(entries)
 
-    def import_accounting_pdf_dialog(self):
+    def import_accounting_pdf_dialog(self,field='salary'):
+        if field not in ('salary','thirteenth'):
+            raise ValueError('Tipo de importação de PDF contábil inválido.')
         period=self.selected_payroll_period()
         if period is None:
             return
         year,month=period
+        if field=='thirteenth' and month not in (11,12):
+            messagebox.showwarning(
+                'Competência indisponível',
+                'O 13º salário só pode ser importado nas folhas de novembro e dezembro.',
+                parent=self)
+            return
         with connect() as con:
             payroll=con.execute(
                 'SELECT * FROM payrolls WHERE year=? AND month=?',period).fetchone()
@@ -2776,9 +2869,11 @@ class FolhaBase:
                 return
             items=con.execute('''SELECT i.*,e.name FROM payroll_items i
                 JOIN employees e ON e.id=i.employee_id WHERE i.payroll_id=?''',(payroll['id'],)).fetchall()
-        initialdir,initialfile=accounting_pdf_selection_defaults(year,month)
+        initialdir,initialfile=accounting_pdf_selection_defaults(year,month,field)
         path=filedialog.askopenfilename(
-            parent=self,title='Selecionar PDF da contabilidade',
+            parent=self,
+            title='Selecionar PDF do 13º salário' if field=='thirteenth'
+            else 'Selecionar PDF da contabilidade',
             initialdir=initialdir,initialfile=initialfile,
             filetypes=[('PDF','*.pdf')])
         if not path:
@@ -2799,7 +2894,9 @@ class FolhaBase:
             return
         by_employee={item['employee_id']:item for item in items}
         form=self._form_window(self)
-        self._configure_form(form, 'title', f'Conferir importação — {MONTHS[month-1]}/{year}')
+        label='13º salário' if field=='thirteenth' else 'Salário'
+        self._configure_form(
+            form,'title',f'Conferir importação do {label} — {MONTHS[month-1]}/{year}')
         self._configure_form(form, 'transient', self)
         self._configure_form(form, 'grab_set')
         self._configure_form(form, 'geometry', '900x550')
@@ -2807,7 +2904,8 @@ class FolhaBase:
         body.pack(fill='both',expand=True)
         ttk.Label(body,text='Todos estão incluídos. Clique na coluna Importar para deixar alguém de fora.',
             font=('Segoe UI Semibold',11)).pack(anchor='w')
-        ttk.Label(body,text='O líquido do PDF substituirá SALÁRIO. Os demais valores e descontos serão mantidos '
+        target=label.upper()
+        ttk.Label(body,text=f'O líquido do PDF substituirá {target}. Os demais valores e descontos serão mantidos '
             'e aplicados novamente no cálculo. Nenhum desconto é importado do PDF. '
             'Confira para evitar descontos em duplicidade.',
             wraplength=840,style='Sub.TLabel').pack(anchor='w',pady=8)
@@ -2817,7 +2915,7 @@ class FolhaBase:
         table.tag_configure('included',background='#e6f6ec',foreground='#14532d')
         table.tag_configure('excluded',background='#fee2e2',foreground='#991b1b')
         for key,title,width in (('include','Importar',90),('name','Funcionário',440),
-                ('new','Líquido do PDF → Salário',260)):
+                ('new',f'Líquido do PDF → {label}',260)):
             table.heading(key,text=title)
             table.column(key,width=width,anchor='w' if key=='name' else 'center')
         scroll=ttk.Scrollbar(table_frame,orient='vertical',command=table.yview)
@@ -2827,7 +2925,7 @@ class FolhaBase:
         choices={}
         for entry in entries:
             item=by_employee[entry['employee_id']]
-            entry['previous_salary']=item['salary']
+            entry[f'previous_{field}']=item[field]
             key=str(entry['employee_id'])
             choices[key]=entry
             table.insert('','end',iid=key,values=(
@@ -2852,19 +2950,23 @@ class FolhaBase:
                 messagebox.showwarning('Sem seleção','Selecione os funcionários que deseja importar.',parent=form)
                 return
             if not messagebox.askyesno('Confirmar importação',
-                    f'Alterar a coluna Salário de {len(selected)} funcionários em {MONTHS[month-1]}/{year}?\n\n'
+                    f'Alterar a coluna {label} de {len(selected)} funcionários em {MONTHS[month-1]}/{year}?\n\n'
                     'Os descontos existentes continuarão sendo aplicados. Confirme somente após conferir os valores.',
                     parent=form):
                 return
             try:
                 saved=self.save_accounting_pdf_values(
-                    year,month,selected,source_path=path)
+                    year,month,selected,source_path=path,field=field)
             except (ValueError,sqlite3.Error) as ex:
                 messagebox.showerror('Importação não realizada',str(ex),parent=form)
                 return
             form.destroy()
             self.load_payroll()
-            messagebox.showinfo('Importação concluída',f'{saved} salários atualizados.',parent=self)
+            message=(
+                'salários atualizados' if field=='salary'
+                else 'valores do 13º salário atualizados')
+            messagebox.showinfo(
+                'Importação concluída',f'{saved} {message}.',parent=self)
 
         ttk.Button(buttons,text='Cancelar',command=form.destroy).pack(side='right')
         ttk.Button(buttons,text='Importar incluídos',command=save,style='Accent.TButton').pack(side='right',padx=8)
@@ -2877,6 +2979,9 @@ class FolhaBase:
         try: year=int(self.pay_year.get())
         except (ValueError,tk.TclError): year=self.current_payroll_year
         month=MONTHS.index(self.pay_month.get())+1 if self.pay_month.get() in MONTHS else self.current_payroll_month
+        if hasattr(self,'thirteenth_import_button'):
+            self.thirteenth_import_button.configure(
+                state='normal' if month in (11,12) else 'disabled')
         all_columns=self.pay_tree['columns']
         self.pay_tree['displaycolumns']=list(all_columns)
         with connect() as con:
@@ -5657,9 +5762,33 @@ class FolhaBase:
                     ('BOTTOMPADDING',(0,0),(-1,-1),2),
                 ]))
                 story.extend([Spacer(1,2*mm),observation])
-            loan_lines=[['Valor emprestado','Qtd. parcelas','Parcela atual','Valor da parcela','Parcelas restantes','Saldo restante']]
             with connect() as con:
-                for loan in con.execute('SELECT * FROM employee_loans WHERE employee_id=? ORDER BY id',(row['employee_id'],)).fetchall():
+                loans=con.execute(
+                    'SELECT * FROM employee_loans WHERE employee_id=? ORDER BY id',
+                    (row['employee_id'],)).fetchall()
+                loan_lines=[['Valor emprestado','Qtd. parcelas','Parcela atual',
+                                 'Valor da parcela','Parcelas restantes','Saldo restante']]
+                advance_observations=[]
+                for loan in loans:
+                    loan_kind=loan['kind'] if loan['kind'] in LOAN_KINDS else LOAN_KIND
+                    if loan_kind==ADVANCE_KIND:
+                        settled_period=(
+                            (loan['settled_year'],loan['settled_month'])
+                            if loan['settled_year'] is not None else None)
+                        if settled_period==(year,month):
+                            note=(loan['notes'] or '').strip()
+                            if note and float(loan['settlement_amount'] or 0)>0:
+                                advance_observations.append(note)
+                        if settled_period and (year,month)>=settled_period:
+                            continue
+                        principal,count,elapsed,_,_=loan_terms_for_month(
+                            con,loan,year,month)
+                        if 0<=elapsed<count:
+                            note=(loan['notes'] or '').strip()
+                            if note:
+                                advance_observations.append(note)
+                    if loan_kind!=LOAN_KIND:
+                        continue
                     if loan['settled_year'] is not None:
                         settled_period=(loan['settled_year'],loan['settled_month'])
                         if (year,month)==settled_period:
@@ -5674,19 +5803,69 @@ class FolhaBase:
                         number=elapsed+1
                         balance=sum(loan_installment(principal,count,n) for n in range(number+1,count+1))
                         loan_lines.append([brl(principal),str(count),f'{number}/{count}',brl(loan_installment(principal,count,number)),str(count-number),brl(balance)])
-            if len(loan_lines)>1:
-                loan_table=Table(loan_lines,colWidths=[31*mm,26*mm,28*mm,34*mm,34*mm,33*mm])
-                loan_table.setStyle(TableStyle([
+                if len(loan_lines)>1:
+                    loan_table=Table(loan_lines,colWidths=[31*mm,26*mm,28*mm,34*mm,34*mm,33*mm])
+                    loan_table.setStyle(TableStyle([
+                        ('BACKGROUND',(0,0),(-1,0),colors.HexColor(NAVY)),
+                        ('TEXTCOLOR',(0,0),(-1,0),colors.white),
+                        ('FONTNAME',(0,0),(-1,0),'Helvetica-Bold'),
+                        ('FONTSIZE',(0,0),(-1,-1),6.5),
+                        ('ALIGN',(0,0),(-1,-1),'CENTER'),
+                        ('VALIGN',(0,0),(-1,-1),'MIDDLE'),
+                        ('GRID',(0,0),(-1,-1),0.3,colors.HexColor('#dbe3ee')),
+                        ('TOPPADDING',(0,0),(-1,-1),1),('BOTTOMPADDING',(0,0),(-1,-1),1),
+                    ]))
+                    section_title=Paragraph(
+                        'Empréstimos',ParagraphStyle('SlipLoanTitle',parent=small,
+                                                      fontName='Helvetica-Bold',fontSize=7.5,
+                                                      textColor=colors.HexColor(NAVY)))
+                    story.extend([Spacer(1,2.5*mm),section_title,
+                                  Spacer(1,0.5*mm),loan_table])
+            deduction_header_style=ParagraphStyle(
+                'SlipDeductionHeader',parent=small,fontName='Helvetica-Bold',
+                fontSize=6.5,leading=7,textColor=colors.white)
+            deduction_header_center_style=ParagraphStyle(
+                'SlipDeductionHeaderCenter',parent=deduction_header_style,alignment=1)
+            deduction_value_style=ParagraphStyle(
+                'SlipDeductionValue',parent=small,alignment=1)
+            other_deduction_rows=[[
+                Paragraph('Desconto',deduction_header_style),
+                Paragraph('Valor na folha',deduction_header_center_style),
+                Paragraph('Observação',deduction_header_style),
+            ]]
+            for label,key,kind in (
+                    ('Marmitex','marmitex',None),
+                    ('Farmácia','pharmacy',None),
+                    ('Adiantamento Salarial','advances',ADVANCE_KIND),
+                    ('Outros descontos','other_deductions',None)):
+                observation_lines=list(advance_observations) if kind else []
+                observation_text='\n'.join(observation_lines) or '—'
+                if not float(row[key] or 0) and not observation_lines:
+                    continue
+                detail=Paragraph(
+                    xml_escape(observation_text).replace('\n','<br/>'),small)
+                other_deduction_rows.append([
+                    Paragraph(xml_escape(label),small),
+                    Paragraph(brl(row[key]),deduction_value_style),
+                    detail,
+                ])
+            if len(other_deduction_rows)>1:
+                other_deduction_table=Table(
+                    other_deduction_rows,colWidths=[45*mm,38*mm,103*mm])
+                other_deduction_table.setStyle(TableStyle([
                     ('BACKGROUND',(0,0),(-1,0),colors.HexColor(NAVY)),
                     ('TEXTCOLOR',(0,0),(-1,0),colors.white),
-                    ('FONTNAME',(0,0),(-1,0),'Helvetica-Bold'),
-                    ('FONTSIZE',(0,0),(-1,-1),6.5),
-                    ('ALIGN',(0,0),(-1,-1),'CENTER'),
+                    ('ALIGN',(1,0),(1,-1),'CENTER'),
                     ('VALIGN',(0,0),(-1,-1),'MIDDLE'),
                     ('GRID',(0,0),(-1,-1),0.3,colors.HexColor('#dbe3ee')),
                     ('TOPPADDING',(0,0),(-1,-1),1),('BOTTOMPADDING',(0,0),(-1,-1),1),
                 ]))
-                story.extend([Spacer(1,2.5*mm),Paragraph('Empréstimos e adiantamentos',ParagraphStyle('SlipLoanTitle',parent=small,fontName='Helvetica-Bold',fontSize=7.5,textColor=colors.HexColor(NAVY))),Spacer(1,0.5*mm),loan_table])
+                section_title=Paragraph(
+                    'Demais descontos',ParagraphStyle(
+                        'SlipOtherDeductionsTitle',parent=small,fontName='Helvetica-Bold',
+                        fontSize=7.5,textColor=colors.HexColor(NAVY)))
+                story.extend([Spacer(1,2.5*mm),section_title,
+                              Spacer(1,0.5*mm),other_deduction_table])
             if index<len(rows)-1:
                 story.append(PageBreak())
         document.build(story,onFirstPage=lambda c,d:self.pdf_page_header(c,page_size,generated,d.page),onLaterPages=lambda c,d:self.pdf_page_header(c,page_size,generated,d.page),canvasmaker=NumberedReportCanvas)
@@ -5734,7 +5913,7 @@ class FolhaBase:
             employee_id=None if index==0 else employees[index-1]['id']
             try:
                 path=temporary_pdf_path(f'demonstrativos_pagamento_{year}_{month:02d}_')
-                report_path=self.accounting_report_path_for_period(year,month)
+                report_path=self.accounting_report_paths_for_period(year,month)
                 self.write_payslips_with_accounting_report(
                     year,month,path,employee_id,report_path)
                 open_pdf(path)
@@ -5753,7 +5932,7 @@ class FolhaBase:
             controls,text='Gerar PDF',style='Report.TButton',
             command=generate).pack(side='right')
 
-    def accounting_report_path_for_period(self,year,month):
+    def accounting_report_path_for_period(self,year,month,excluded_paths=()):
         with connect() as con:
             row=con.execute(
                 'SELECT path,pdf_data FROM payroll_accounting_reports WHERE year=? AND month=?',
@@ -5767,12 +5946,20 @@ class FolhaBase:
         period_folder=os.path.join(
             ACCOUNTING_PDF_DIR,str(year),f'{month:02d}{year}')
         initialdir=period_folder if os.path.isdir(period_folder) else DATA_DIR
+        excluded={
+            os.path.normcase(os.path.abspath(path))
+            for path in excluded_paths if path
+        }
         if os.path.isdir(period_folder):
             reports=sorted(
                 os.path.join(period_folder,name)
                 for name in os.listdir(period_folder)
                 if name.lower().endswith('.pdf')
                 and os.path.isfile(os.path.join(period_folder,name)))
+            reports=[
+                report for report in reports
+                if os.path.normcase(os.path.abspath(report)) not in excluded
+            ]
             if len(reports)==1:
                 report_path=str(reports[0])
                 with connect() as con:
@@ -5797,8 +5984,57 @@ class FolhaBase:
                 store_accounting_report(con,year,month,path)
         return path or None
 
+    def thirteenth_accounting_report_path_for_period(self,year,month):
+        if month not in (11,12):
+            return None
+        with connect() as con:
+            row=con.execute(
+                'SELECT path,pdf_data FROM payroll_thirteenth_reports '
+                'WHERE year=? AND month=?',(year,month)).fetchone()
+        if row and row['pdf_data'] is not None:
+            return cached_accounting_report(
+                year,month,row['pdf_data'],field='thirteenth')
+        if row and os.path.isfile(row['path']):
+            with connect() as con:
+                store_thirteenth_accounting_report(con,year,month,row['path'])
+            return row['path']
+        if row is None:
+            return None
+        path=filedialog.askopenfilename(
+            parent=self,
+            title='Localizar PDF contábil do 13º salário para anexar ao demonstrativo',
+            initialdir=accounting_pdf_initial_directory(),
+            filetypes=[('PDF','*.pdf')])
+        if not path:
+            raise ValueError(
+                'O PDF contábil do 13º salário desta competência não está disponível. '
+                'Selecione o arquivo original para que ele acompanhe a sincronização. '
+                'O demonstrativo não foi gerado sem esse anexo.')
+        with connect() as con:
+            store_thirteenth_accounting_report(con,year,month,path)
+        return path
+
+    def accounting_report_paths_for_period(self,year,month):
+        reports=[]
+        thirteenth_path=self.thirteenth_accounting_report_path_for_period(year,month)
+        with connect() as con:
+            thirteenth=con.execute(
+                'SELECT path FROM payroll_thirteenth_reports '
+                'WHERE year=? AND month=?',(year,month)).fetchone()
+        excluded_paths=[
+            thirteenth['path'] if thirteenth else None,
+            thirteenth_path,
+        ]
+        salary_path=self.accounting_report_path_for_period(
+            year,month,excluded_paths)
+        if salary_path:
+            reports.append(('salary',salary_path))
+        if thirteenth_path:
+            reports.append(('thirteenth',thirteenth_path))
+        return reports
+
     def append_accounting_report_to_payslip(
-            self,year,month,path,employee_id,report_path):
+            self,year,month,path,employee_id,report_path,report_type='salary'):
         if os.path.abspath(path)==os.path.abspath(report_path):
             raise ValueError('O relatório externo e o demonstrativo de pagamento precisam ser arquivos diferentes.')
         with connect() as con:
@@ -5814,16 +6050,34 @@ class FolhaBase:
         append_employee_report_pages(
             report_path,path,employee_id,employees,year,month)
         with connect() as con:
-            store_accounting_report(con,year,month,report_path)
+            if report_type=='thirteenth':
+                store_thirteenth_accounting_report(con,year,month,report_path)
+            else:
+                store_accounting_report(con,year,month,report_path)
+
+    def append_accounting_reports_to_payslip(
+            self,year,month,path,employee_id,report_paths):
+        for report_type,report_path in report_paths:
+            if report_type=='salary':
+                self.append_accounting_report_to_payslip(
+                    year,month,path,employee_id,report_path)
+            else:
+                self.append_accounting_report_to_payslip(
+                    year,month,path,employee_id,report_path,report_type)
 
     def write_payslips_with_accounting_report(
             self,year,month,path,employee_id,report_path):
-        if not report_path:
+        if isinstance(report_path,str):
+            report_paths=[('salary',report_path)] if report_path else []
+        else:
+            report_paths=report_path or []
+        if not report_paths:
             return self.write_payslips_pdf(year,month,path,employee_id)
+
         if employee_id is not None:
             self.write_payslips_pdf(year,month,path,employee_id)
-            self.append_accounting_report_to_payslip(
-                year,month,path,employee_id,report_path)
+            self.append_accounting_reports_to_payslip(
+                year,month,path,employee_id,report_paths)
             return 1
 
         payroll,rows=self.payroll_report_rows(year,month)
@@ -5842,8 +6096,8 @@ class FolhaBase:
                     temporary_folder,f'demonstrativo_pagamento_{row["employee_id"]}.pdf')
                 self.write_payslips_pdf(
                     year,month,employee_path,row['employee_id'])
-                self.append_accounting_report_to_payslip(
-                    year,month,employee_path,row['employee_id'],report_path)
+                self.append_accounting_reports_to_payslip(
+                    year,month,employee_path,row['employee_id'],report_paths)
                 writer.append(employee_path)
             with open(writer_path,'wb') as output:
                 writer.write(output)
@@ -5885,7 +6139,7 @@ class FolhaBase:
                 parent=self)
             return
         try:
-            report_path=self.accounting_report_path_for_period(year,month)
+            report_paths=self.accounting_report_paths_for_period(year,month)
         except (OSError,ValueError,sqlite3.Error) as ex:
             messagebox.showerror('Erro ao localizar PDF contábil',str(ex),parent=self)
             return
@@ -5901,9 +6155,9 @@ class FolhaBase:
         try:
             self.write_payslips_pdf(
                 year,month,path,employee['employee_id'])
-            if report_path:
-                self.append_accounting_report_to_payslip(
-                    year,month,path,employee['employee_id'],report_path)
+            if report_paths:
+                self.append_accounting_reports_to_payslip(
+                    year,month,path,employee['employee_id'],report_paths)
             open_pdf(path)
             open_whatsapp_desktop(chat_url)
             show_file_in_folder(path)
@@ -6009,7 +6263,7 @@ class FolhaBase:
                     parent=win)
                 return
             try:
-                report_path=self.accounting_report_path_for_period(year,month)
+                report_paths=self.accounting_report_paths_for_period(year,month)
             except (OSError,ValueError,sqlite3.Error) as ex:
                 messagebox.showerror('Erro ao localizar PDF contábil',str(ex),parent=win)
                 return
@@ -6032,9 +6286,9 @@ class FolhaBase:
                 try:
                     self.write_payslips_pdf(
                         year,month,path,employee['id'])
-                    if report_path:
-                        self.append_accounting_report_to_payslip(
-                            year,month,path,employee['id'],report_path)
+                    if report_paths:
+                        self.append_accounting_reports_to_payslip(
+                            year,month,path,employee['id'],report_paths)
                 except Exception as ex:
                     errors.append(f'{employee["name"]}: {ex}')
                 else:
@@ -7456,16 +7710,21 @@ class FolhaPanel(FolhaBase,tk.Frame):
                     width=8
                 button.configure(compound='left' if compact else 'top',
                                  width=0 if compact else width)
+                if self.centralized_actions:
+                    selected=button.cget('style').endswith('ModuleSelected.TButton')
+                    button.configure(style=self._navigation_style(selected))
         if hasattr(self,'signing_expiry_label'):
             self.signing_expiry_label.configure(padx=6 if compact else 9,pady=3 if compact else 5)
         self.main_content.configure(padding=(6,3) if compact else (8,6))
         self.titlebar.pack_configure(pady=(0,3) if compact else (0,8))
         self.page_title.pack_configure(pady=3 if compact else 8)
-        self.dashboard_logo_label.configure(
-            image=self.compact_dashboard_logo_image if compact else self.dashboard_logo_image)
+        if not self.centralized_actions:
+            self.dashboard_logo_label.configure(
+                image=self.compact_dashboard_logo_image if compact else self.dashboard_logo_image)
         self.dashboard_tab.configure(padding=8 if compact else 14)
         self.dashboard_topbar.pack_configure(pady=(0,5) if compact else (0,10))
-        self.dashboard_quick_actions.pack_configure(pady=(0,6) if compact else (0,12))
+        if not self.centralized_actions:
+            self.dashboard_quick_actions.pack_configure(pady=(0,6) if compact else (0,12))
         self.dashboard_cards.pack_configure(pady=(0,8) if compact else (0,14))
         self.dashboard_summary.pack_configure(pady=(0,8) if compact else (0,14))
         for icon,hint in zip(self.card_icons,self.card_hints):

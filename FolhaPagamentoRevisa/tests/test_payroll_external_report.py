@@ -65,16 +65,24 @@ class PayrollExternalReportTests(unittest.TestCase):
 
     def test_suggests_the_saved_pdf_for_each_payroll_period(self):
         october_path = self.folder / "MEGA" / "outubro folha.pdf"
+        thirteenth_path = self.folder / "MEGA" / "13 salario novembro.pdf"
         october_path.parent.mkdir(parents=True)
         october_path.write_bytes(b"%PDF-")
+        thirteenth_path.write_bytes(b"%PDF-")
         connection = sqlite3.connect(":memory:")
         connection.row_factory = sqlite3.Row
         connection.execute("""CREATE TABLE payroll_accounting_reports(
             year INTEGER, month INTEGER, path TEXT, pdf_data BLOB, updated_at TEXT,
             PRIMARY KEY(year, month))""")
+        connection.execute("""CREATE TABLE payroll_thirteenth_reports(
+            year INTEGER, month INTEGER, path TEXT, pdf_data BLOB, updated_at TEXT,
+            PRIMARY KEY(year, month))""")
         connection.execute(
             "INSERT INTO payroll_accounting_reports(year,month,path) VALUES(2026,10,?)",
             (str(october_path),))
+        connection.execute(
+            "INSERT INTO payroll_thirteenth_reports(year,month,path) VALUES(2026,11,?)",
+            (str(thirteenth_path),))
         self.addCleanup(connection.close)
 
         with patch.object(APP, "connect", return_value=connection), \
@@ -90,6 +98,9 @@ class PayrollExternalReportTests(unittest.TestCase):
             self.assertEqual(
                 APP.accounting_pdf_selection_defaults(2026, 11),
                 (str(october_path.parent), None))
+            self.assertEqual(
+                APP.accounting_pdf_selection_defaults(2026, 11, 'thirteenth'),
+                (str(thirteenth_path.parent), thirteenth_path.name))
 
     def test_places_only_matching_employee_report_below_payslip_on_same_page(self):
         self.write_pdf(self.payslip_path, [["Holerite Ana Silva"]])
@@ -195,10 +206,17 @@ class PayrollExternalReportTests(unittest.TestCase):
 
     def test_all_payslips_are_followed_by_their_matching_external_pages(self):
         self.write_pdf(self.report_path, [
-            ["Envelope Ana Silva", "Competência: Outubro de 2026",
+            ["Envelope Ana Silva", "Competência: Novembro de 2026",
              "Valor líquido 1.234,56"],
-            ["Envelope Bruna Costa", "Competência: Outubro de 2026",
+            ["Envelope Bruna Costa", "Competência: Novembro de 2026",
              "Valor líquido 2.345,67"],
+        ])
+        thirteenth_report_path = self.folder / "thirteenth.pdf"
+        self.write_pdf(thirteenth_report_path, [
+            ["Envelope 13º Ana Silva", "Competência: Novembro de 2026",
+             "Valor líquido 1.000,00"],
+            ["Envelope 13º Bruna Costa", "Competência: Novembro de 2026",
+             "Valor líquido 2.000,00"],
         ])
         output_path = self.folder / "all-payslips.pdf"
         app = object.__new__(APP.FolhaBase)
@@ -210,21 +228,124 @@ class PayrollExternalReportTests(unittest.TestCase):
                 item for item in self.employees if item["id"] == employee_id)
             self.write_pdf(path, [[f'Holerite {employee["name"]}']])
 
-        def append_report(year, month, path, employee_id, report_path):
+        def append_report(
+                year, month, path, employee_id, report_path, report_type='salary'):
             append_employee_report_pages(
                 report_path, path, employee_id, self.employees, year, month)
 
         app.write_payslips_pdf = write_payslip
         app.append_accounting_report_to_payslip = append_report
         app.write_payslips_with_accounting_report(
-            2026, 10, str(output_path), None, str(self.report_path))
+            2026, 11, str(output_path), None, [
+                ('salary', str(self.report_path)),
+                ('thirteenth', str(thirteenth_report_path)),
+            ])
 
         pages = PdfReader(output_path).pages
         self.assertEqual(len(pages), 2)
         self.assertIn("Holerite Ana Silva", pages[0].extract_text())
         self.assertIn("Envelope Ana Silva", pages[0].extract_text())
+        self.assertIn("Envelope 13º Ana Silva", pages[0].extract_text())
         self.assertIn("Holerite Bruna Costa", pages[1].extract_text())
         self.assertIn("Envelope Bruna Costa", pages[1].extract_text())
+        self.assertIn("Envelope 13º Bruna Costa", pages[1].extract_text())
+
+    def test_imports_thirteenth_pdf_without_replacing_salary_or_its_pdf(self):
+        database = self.folder / "thirteenth-import.db"
+        self.create_database(database)
+        salary_pdf = self.folder / "salary.pdf"
+        thirteenth_pdf = self.folder / "thirteenth-import.pdf"
+        self.write_pdf(salary_pdf, [[
+            "Envelope Ana Silva", "Competência: Novembro de 2026",
+            "Valor líquido 1.234,56",
+        ]])
+        self.write_pdf(thirteenth_pdf, [[
+            "Envelope Ana Silva", "Competência: Novembro de 2026",
+            "Valor líquido 456,78",
+        ]])
+        app = object.__new__(APP.FolhaBase)
+        report_path = self.folder / "payroll-report.pdf"
+
+        with patch.object(APP, "DB_PATH", str(database)), \
+                patch.object(APP, "DATA_DIR", str(self.folder / "other-pc")):
+            with APP.connect() as connection:
+                connection.execute(
+                    "INSERT INTO employees(id,name) VALUES(1,'Ana Silva')")
+                connection.execute(
+                    "INSERT INTO payrolls(id,year,month) VALUES(1,2026,11)")
+                connection.execute(
+                    """INSERT INTO payroll_items(
+                        payroll_id,employee_id,salary,thirteenth,total)
+                        VALUES(1,1,1000,0,1000)""")
+
+            salary_entries, _ = APP.read_payroll_pdf(
+                salary_pdf, self.employees, 2026, 11)
+            app.save_accounting_pdf_values(
+                2026, 11, [{
+                    **salary_entries[0], "previous_salary": 1000,
+                }], source_path=str(salary_pdf))
+            thirteenth_entries, _ = APP.read_payroll_pdf(
+                thirteenth_pdf, self.employees, 2026, 11)
+            app.save_accounting_pdf_values(
+                2026, 11, [{
+                    **thirteenth_entries[0], "previous_thirteenth": 0,
+                }], source_path=str(thirteenth_pdf), field="thirteenth")
+
+            with APP.connect() as connection:
+                item = connection.execute(
+                    "SELECT salary,thirteenth FROM payroll_items").fetchone()
+                salary_report = connection.execute(
+                    "SELECT pdf_data FROM payroll_accounting_reports "
+                    "WHERE year=2026 AND month=11").fetchone()
+                thirteenth_report = connection.execute(
+                    "SELECT pdf_data FROM payroll_thirteenth_reports "
+                    "WHERE year=2026 AND month=11").fetchone()
+            self.assertEqual(tuple(item), (1234.56, 456.78))
+            self.assertEqual(salary_report["pdf_data"], salary_pdf.read_bytes())
+            self.assertEqual(thirteenth_report["pdf_data"], thirteenth_pdf.read_bytes())
+
+            reports = app.accounting_report_paths_for_period(2026, 11)
+            self.assertEqual([kind for kind, _ in reports], ["salary", "thirteenth"])
+
+            app.apply_loan_installments = lambda *_: None
+            with patch.object(APP.FolhaBase, "pdf_page_header"):
+                app.write_payroll_pdf(2026, 11, str(report_path))
+            report_text = "\n".join(
+                page.extract_text() for page in PdfReader(report_path).pages)
+            self.assertIn("13º salário", report_text)
+            self.assertIn("456,78", report_text)
+
+    def test_thirteenth_pdf_is_not_mistaken_for_the_monthly_salary_pdf(self):
+        database = self.folder / "period-folder.db"
+        self.create_database(database)
+        accounting_folder = self.folder / "accounting"
+        period_folder = accounting_folder / "2026" / "112026"
+        period_folder.mkdir(parents=True)
+        thirteenth_pdf = period_folder / "13-salario.pdf"
+        self.write_pdf(thirteenth_pdf, [[
+            "Envelope Ana Silva", "Competência: Novembro de 2026",
+            "Valor líquido 456,78",
+        ]])
+        app = object.__new__(APP.FolhaBase)
+
+        with patch.object(APP, "DB_PATH", str(database)), \
+                patch.object(APP, "DATA_DIR", str(self.folder / "other-pc")), \
+                patch.object(APP, "ACCOUNTING_PDF_DIR", str(accounting_folder)):
+            with APP.connect() as connection:
+                APP.store_thirteenth_accounting_report(
+                    connection, 2026, 11, str(thirteenth_pdf))
+
+            reports = app.accounting_report_paths_for_period(2026, 11)
+
+        self.assertEqual([kind for kind, _ in reports], ["thirteenth"])
+
+    def test_rejects_thirteenth_import_outside_november_and_december(self):
+        app = object.__new__(APP.FolhaBase)
+        with self.assertRaisesRegex(ValueError, "novembro e dezembro"):
+            app.save_accounting_pdf_values(
+                2026, 10, [{
+                    "employee_id": 1, "amount": 100, "previous_thirteenth": 0,
+                }], field="thirteenth")
 
     def test_refuses_page_matching_multiple_employees(self):
         self.write_pdf(self.payslip_path, [["Holerite Ana Silva"]])

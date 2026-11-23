@@ -37,11 +37,33 @@ class ActionLayoutTests(unittest.TestCase):
         self.assertGreaterEqual(trigger.winfo_reqheight(), 32)
         self.assertEqual(str(trigger.cget("takefocus")), "1")
         trigger.event_generate("<Enter>")
-        self.assertEqual(trigger.cget("background"), theme.SELECTED)
-        self.assertEqual(trigger.cget("highlightbackground"), theme.PRIMARY)
+        self.assertEqual(trigger.cget("state"), "active")
+        self.assertEqual(trigger.cget("activebackground"), theme.YELLOW)
         trigger.event_generate("<Leave>")
-        self.assertEqual(trigger.cget("background"), theme.HOVER)
-        self.assertEqual(trigger.cget("highlightbackground"), theme.BORDER)
+        self.assertEqual(trigger.cget("state"), "normal")
+        self.assertEqual(trigger.cget("background"), theme.SURFACE)
+        self.assertEqual(trigger.cget("highlightbackground"), theme.PAPER_BORDER)
+
+    def test_primary_action_remains_the_original_button(self):
+        row = ttk.Frame(self.root)
+        row.pack()
+        calls = []
+        primary = ttk.Button(row, text="Adicionar", command=lambda: calls.append("add"))
+        primary.pack(side="left")
+        delete = ttk.Button(row, text="Excluir", command=lambda: calls.append("delete"))
+        delete.pack(side="left")
+        trigger = group_actions(row, "Ações", primary="Adicionar")
+        menu = trigger.nametowidget(trigger.cget("menu"))
+        self.root.update()
+        self.assertTrue(primary.winfo_viewable())
+        self.assertFalse(delete.winfo_viewable())
+        self.assertEqual(menu.index("end"), 0)
+        self.assertEqual(str(menu.entrycget(0, "foreground")), theme.DANGER)
+        primary.invoke()
+        primary.state(["disabled"])
+        primary.invoke()
+        menu.invoke(0)
+        self.assertEqual(calls, ["add", "delete"])
 
     def test_menu_preserves_commands_labels_and_disabled_states(self):
         row = ttk.Frame(self.root)
@@ -62,6 +84,25 @@ class ActionLayoutTests(unittest.TestCase):
         self.assertEqual(menu.entrycget(0, "state"), "disabled")
         self.assertFalse(source.winfo_manager())
 
+    def test_grouped_menu_and_submenu_highlight_actions_in_yellow(self):
+        row = ttk.Frame(self.root)
+        row.pack()
+        calls = []
+        submenu = tk.Menu(row, tearoff=False)
+        submenu.add_command(label="Editar cadastro", command=lambda: calls.append("edit"))
+        submenu.add_command(label="Excluir colaborador")
+        ttk.Menubutton(row, text="Cadastro", menu=submenu).pack()
+        trigger = group_actions(row, "Colaboradores")
+        menu = trigger.nametowidget(trigger.cget("menu"))
+        self.assertEqual(menu.entrycget(0, "menu"), str(submenu))
+        for action_menu in (menu, submenu):
+            action_menu.activate(0)
+            self.assertEqual(action_menu.index("active"), 0)
+            self.assertEqual(str(action_menu.cget("activebackground")), theme.YELLOW)
+        self.assertEqual(str(submenu.entrycget(1, "activeforeground")), theme.DANGER)
+        submenu.invoke(0)
+        self.assertEqual(calls, ["edit"])
+
     def test_direct_action_replaces_menu_and_hides_original_button(self):
         row = ttk.Frame(self.root)
         row.pack()
@@ -73,6 +114,8 @@ class ActionLayoutTests(unittest.TestCase):
 
         self.assertIsInstance(trigger, tk.Button)
         self.assertEqual(trigger.cget("text"), "Rateio de energia")
+        self.assertEqual(trigger.cget("background"), theme.SURFACE)
+        self.assertEqual(trigger.cget("activebackground"), theme.YELLOW)
         self.assertNotIn("menu", trigger.keys())
         self.assertFalse(source.winfo_manager())
         trigger.invoke()
@@ -122,13 +165,31 @@ class IntegratedModuleTests(unittest.TestCase):
             payroll.init_db()
             payroll.use_light_theme()
             app = payroll.FolhaPanel(self.root, centralized_actions=True,
-                                     signing_status_callback=lambda: ("Teste", "ok", ""))
+                                     signing_status_callback=lambda: ("Teste", "ok", "09/01/2027"))
             app.pack(fill="both", expand=True)
             self.addCleanup(app.inline_forms.close_all)
             self.root.update()
-            for name in ("payroll", "employees", "salaries", "loans"):
-                app.navigate(name)
+            self.assertEqual(app.current_section, "dashboard")
+            notice = app.signing_expiry_label
+            self.assertEqual(notice.cget("text"), "Assinatura válida até 09/01/2027")
+            self.assertEqual(notice.winfo_rgb(notice.cget("background")), notice.winfo_rgb("#B42318"))
+            self.assertEqual(notice.winfo_rgb(notice.cget("foreground")), notice.winfo_rgb("white"))
+            for compact in (True, False):
+                app.set_compact_layout(compact)
                 self.root.update()
+                self.assertEqual(app.titlebar.pack_slaves(), [app.page_title])
+                self.assertEqual(app.page_title.cget("text"), "Painel de controle")
+            dashboard_buttons = self.descendants(app.dashboard_tab, ttk.Button)
+            self.assertTrue({"Abrir folha mensal", "Colaboradores"}.isdisjoint(
+                button.cget("text") for button in dashboard_buttons))
+            style = ttk.Style(self.root)
+            self.assertEqual(style.lookup(app.dashboard_tab.cget("style"), "background"), theme.PAPER)
+            for name in ("payroll", "employees", "salaries", "loans"):
+                selected = app.navigation_buttons[name]
+                selected.invoke()
+                self.root.update()
+                self.assertEqual(app.current_section, name)
+                self.assertEqual(ttk.Style(self.root).lookup(selected.cget("style"), "background"), theme.YELLOW)
                 menus = self.descendants(app.current_page, tk.Menubutton)
                 self.assertTrue(menus, name)
                 if name == "payroll":
@@ -227,9 +288,23 @@ class IntegratedModuleTests(unittest.TestCase):
             app = energy.App(container, embutido=True)
             self.addCleanup(app.encerrar)
             self.root.update()
+            notice = app.aviso_aberto
+            self.assertEqual(notice.winfo_rgb(notice.cget("background")), notice.winfo_rgb("#B42318"))
+            self.assertEqual(notice.winfo_rgb(notice.cget("foreground")), notice.winfo_rgb("white"))
             self.assertTrue(self.descendants(app.tab_mes, tk.Menubutton))
             self.assertTrue(self.descendants(app.tab_oc, tk.Menubutton))
-            self.assertTrue(self.descendants(app.tab_rel, tk.Menubutton))
+            pdf = next(button for button in self.descendants(app.tab_rel, ttk.Button)
+                       if button.cget("text") == "Gerar relatório em PDF")
+            app.nb.select(app.tab_rel)
+            self.root.update()
+            self.assertTrue(pdf.winfo_viewable())
+            style = ttk.Style(self.root)
+            button_style = pdf.cget("style")
+            self.assertEqual(style.lookup(button_style, "background"), theme.SURFACE)
+            self.assertEqual(style.lookup(button_style, "background", ("active",)), theme.YELLOW)
+            self.assertEqual(style.lookup(button_style, "background", ("pressed",)), theme.YELLOW_HOVER)
+            app.nb.select(app.tab_mes)
+            self.root.update()
             for open_form in (app.editar_contas_mes, app.editar_despesa, app.dialogo_relatorio_pdf):
                 open_form()
                 self.root.update()

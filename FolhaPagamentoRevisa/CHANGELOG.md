@@ -10,6 +10,13 @@
 Todas as mudanças feitas no projeto desde a versão inicial no Git, da mais antiga para a mais recente.
 Para ver o detalhe técnico de qualquer item, use o código do commit: `git show <código>`.
 
+### Executável 1_141: importação do 13º salário por PDF
+
+- Botão disponível somente em novembro e dezembro importa o valor líquido para a coluna do 13º salário, sem alterar o salário mensal.
+- PDF do 13º armazenado separadamente e anexado aos demonstrativos junto ao PDF mensal, quando disponível.
+- Relatório da folha mantém a coluna de 13º salário e inclui os valores importados.
+- O atalho de inicialização prioriza o executável 1_141.
+
 ### Executável 1_140: bolinha vermelha nas observações
 
 - Bolinha vermelha substitui [OBS] à direita do colaborador na folha, com espaço mais compacto.

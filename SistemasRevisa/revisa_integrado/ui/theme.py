@@ -20,6 +20,16 @@ SUCCESS = "#15803D"
 WARNING = "#B45309"
 DANGER = "#C62828"
 
+# Paleta da abertura, do acesso e do painel integrado.
+NAVY = "#0C1726"
+NAVY_HOVER = "#20334A"
+YELLOW = "#FFD21F"
+YELLOW_HOVER = "#F2C30A"
+PAPER = "#F7F6F3"
+PAPER_BORDER = "#E4E1DC"
+NAV_TEXT = "#DCE5EF"
+NAV_MUTED = "#A6B4C6"
+
 FONT = ("Segoe UI", 10)
 FONT_SMALL = ("Segoe UI", 9)
 FONT_BOLD = ("Segoe UI Semibold", 10)
@@ -29,6 +39,7 @@ FONT_SUBTITLE = ("Segoe UI Semibold", 13)
 # normal, hover, texto, borda
 _BUTTONS = {
     "primary": (PRIMARY, PRIMARY_DARK, "#FFFFFF", PRIMARY_DARK),
+    "revisa": (YELLOW, YELLOW_HOVER, NAVY, YELLOW),
     "secondary": ("#F3F5F8", "#E2E8F0", TEXT, "#B9C3D0"),
     "danger": ("#FDECEC", "#F9D5D5", "#B42318", "#E6A3A3"),
 }

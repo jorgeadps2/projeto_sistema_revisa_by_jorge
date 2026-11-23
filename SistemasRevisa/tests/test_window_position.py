@@ -2,6 +2,7 @@ import sys
 import ctypes
 import tkinter as tk
 import unittest
+from itertools import combinations
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -76,7 +77,6 @@ class WindowPositionTests(unittest.TestCase):
             window.startup_splash_label = tk.Canvas(
                 window, width=STARTUP_SPLASH_WIDTH, height=STARTUP_SPLASH_HEIGHT,
                 bg=t.SURFACE, highlightthickness=0)
-            window.startup_splash_image = tk.PhotoImage(width=40, height=40)
             window.startup_splash_label.pack()
             window._update_startup_splash(72)
             window.update_idletasks()
@@ -92,26 +92,34 @@ class WindowPositionTests(unittest.TestCase):
             self.assertNotIn("Sistema Interno está iniciando", texts)
             self.assertNotIn("Sistema Interno", texts)
             self.assertNotIn("R", texts)
-            self.assertIn(
-                "Preparando os módulos e verificando os arquivos.", texts)
-            self.assertIn("Carregando recursos", texts)
+            self.assertEqual((canvas.winfo_reqwidth(), canvas.winfo_reqheight()), (420, 180))
+            self.assertIn("Progresso da inicialização", texts)
             self.assertIn("72%", texts)
-            self.assertIn("Verificando arquivos", texts)
-            self.assertIn("Preparando módulos", texts)
-            self.assertIn("Finalizando abertura", texts)
-            self.assertIn("REVISA", texts)
+            self.assertIn("Verificação", texts)
+            self.assertIn("Preparação", texts)
+            self.assertIn("Finalização", texts)
+            self.assertIn("Sistemas Revisa", texts)
+            text_bounds = []
             for item in canvas.find_all():
                 if canvas.type(item) != "text":
                     continue
+                if canvas.itemcget(item, "text") != "✓":
+                    font = canvas.tk.splitlist(canvas.itemcget(item, "font"))
+                    self.assertGreaterEqual(abs(int(font[1])), 12)
                 bounds = canvas.bbox(item)
                 if bounds:
+                    text_bounds.append(bounds)
                     self.assertGreaterEqual(bounds[0], 0)
                     self.assertLessEqual(bounds[2], STARTUP_SPLASH_WIDTH)
                     self.assertGreaterEqual(bounds[1], 0)
                     self.assertLessEqual(bounds[3], STARTUP_SPLASH_HEIGHT)
+            for first, second in combinations(text_bounds, 2):
+                overlap = (max(first[0], second[0]) < min(first[2], second[2])
+                           and max(first[1], second[1]) < min(first[3], second[3]))
+                self.assertFalse(overlap, (first, second))
             self.assertEqual(canvas.cget("bg"), t.SURFACE)
             self.assertIn(
-                t.PRIMARY_DARK,
+                t.NAVY,
                 [
                     canvas.itemcget(item, "fill")
                     for item in canvas.find_all()
@@ -122,7 +130,7 @@ class WindowPositionTests(unittest.TestCase):
                 item for item in canvas.find_all()
                 if canvas.type(item) == "image"
             ]
-            self.assertEqual(len(image_items), 1)
+            self.assertEqual(image_items, [])
             top_accent_items = [
                 item for item in canvas.find_all()
                 if canvas.type(item) == "rectangle"
@@ -130,16 +138,20 @@ class WindowPositionTests(unittest.TestCase):
                 and canvas.bbox(item)[3] <= 4
             ]
             self.assertEqual(top_accent_items, [])
-            progress_marker_items = [
+            progress_items = [
                 item for item in canvas.find_all()
-                if canvas.type(item) == "oval"
-                and canvas.bbox(item)[1] < 110
+                if canvas.type(item) == "rectangle"
+                and canvas.itemcget(item, "fill") == t.YELLOW
+                and canvas.coords(item)[1] == 99
             ]
-            self.assertEqual(progress_marker_items, [])
+            self.assertEqual(len(progress_items), 1)
+            x0, _, x1, _ = canvas.coords(progress_items[0])
+            self.assertEqual(x0, 20)
+            self.assertAlmostEqual(x1, x0 + (STARTUP_SPLASH_WIDTH - 2 * x0) * .72, delta=.5)
         finally:
             window.destroy()
 
-    def test_startup_splash_uses_native_window_titlebar(self):
+    def test_startup_splash_places_robot_next_to_title(self):
         window = MainWindow.__new__(MainWindow)
         tk.Tk.__init__(window)
         try:
@@ -149,7 +161,20 @@ class WindowPositionTests(unittest.TestCase):
 
             self.assertTrue(window.overrideredirect())
             self.assertEqual(window.title(), "")
-            self.assertEqual(window.startup_splash_image.width(), 40)
+            canvas = window.startup_splash_label
+            title = next(item for item in canvas.find_all()
+                         if canvas.type(item) == "text"
+                         and canvas.itemcget(item, "text") == "Preparando o sistema")
+            images = [item for item in canvas.find_all() if canvas.type(item) == "image"]
+            self.assertEqual(len(images), 1)
+            title_left, title_top, _, title_bottom = canvas.bbox(title)
+            robot_left, robot_top, robot_right, robot_bottom = canvas.bbox(images[0])
+            self.assertEqual(robot_left, 20)
+            self.assertGreater(title_left, robot_right)
+            self.assertLessEqual(title_left - robot_right, 10)
+            self.assertAlmostEqual((robot_top + robot_bottom) / 2,
+                                   (title_top + title_bottom) / 2, delta=1)
+            self.assertLessEqual(robot_right - robot_left, 26)
             window._center_window.assert_called_once_with(
                 STARTUP_SPLASH_WIDTH, STARTUP_SPLASH_WINDOW_HEIGHT)
             window._close_startup_splash()
@@ -164,7 +189,6 @@ class WindowPositionTests(unittest.TestCase):
             window.startup_splash_label = tk.Canvas(
                 window, width=STARTUP_SPLASH_WIDTH, height=STARTUP_SPLASH_HEIGHT,
                 bg=t.SURFACE, highlightthickness=0)
-            window.startup_splash_image = tk.PhotoImage(width=40, height=40)
             window.startup_splash_label.pack()
             window._update_startup_splash(100)
             texts = [
@@ -174,9 +198,9 @@ class WindowPositionTests(unittest.TestCase):
             ]
             self.assertIn("100%", texts)
             self.assertEqual(texts.count("✓"), 3)
-            self.assertIn("Verificando arquivos", texts)
-            self.assertIn("Preparando módulos", texts)
-            self.assertIn("Finalizando abertura", texts)
+            self.assertIn("Verificação", texts)
+            self.assertIn("Preparação", texts)
+            self.assertIn("Finalização", texts)
         finally:
             window.destroy()
 
@@ -338,6 +362,14 @@ class WindowPositionTests(unittest.TestCase):
                      if isinstance(child, tk.Label)]
             self.assertIn("Empresa", texts)
             self.assertIn("Usuário", texts)
+            self.assertIn("Entrar no sistema", texts)
+            for status_text, _ in (window._login_sync_status.return_value,
+                                   window._login_signing_status.return_value):
+                badge = next(child for child in descendants(window)
+                             if isinstance(child, tk.Label) and child.cget("text") == status_text)
+                self.assertEqual(badge.cget("bg"), t.NAVY_HOVER)
+                self.assertEqual(badge.cget("fg"), t.YELLOW)
+            self.assertEqual(window.login_button.cget("bg"), t.YELLOW)
             self.assertNotIn("SISTEMAS REVISA", texts)
             self.assertFalse(any("Versão" in text for text in texts))
             for widget in descendants(window):
@@ -425,11 +457,12 @@ class WindowPositionTests(unittest.TestCase):
                 finally:
                     window.destroy()
 
-    def test_toolbar_buttons_match_compact_reference_width(self):
+    def test_sidebar_highlights_active_page_and_keeps_navigation_commands(self):
         window = MainWindow.__new__(MainWindow)
         tk.Tk.__init__(window)
         try:
             window.icon_images = {}
+            window.images = {}
             window.modules = {}
             window.current = None
             window.navigate = Mock()
@@ -441,23 +474,15 @@ class WindowPositionTests(unittest.TestCase):
             window.update()
 
             toolbar = window.winfo_children()[0]
-            self.assertEqual(toolbar.winfo_height(), 72)
-            buttons = [child for child in toolbar.winfo_children()
-                       if isinstance(child, tk.Button)]
-            self.assertEqual(len(buttons), 7)
-            self.assertEqual(len({button.winfo_width() for button in buttons}), 1)
-            admin_button = next(button for button in buttons
-                                if button.cget("text") == "Administração")
-            self.assertGreaterEqual(buttons[0].winfo_width(),
-                                    admin_button.winfo_reqwidth())
-            self.assertTrue(all(
-                buttons[index + 1].winfo_x()
-                - (buttons[index].winfo_x() + buttons[index].winfo_width()) >= 16
-                for index in range(len(buttons) - 1)
-            ))
-            self.assertEqual(buttons[0].cget("compound"), "top")
-            self.assertEqual(int(admin_button.cget("wraplength")), 0)
-            self.assertEqual(window.icon_images[("painel", 20, 0)].width(), 20)
+            self.assertEqual(toolbar.pack_info()["side"], "left")
+            buttons = window.sidebar_buttons
+            window.current = "painel"
+            window._paint_sidebar_button("painel")
+            self.assertEqual(buttons["painel"].cget("bg"), t.YELLOW)
+            buttons["folha"].invoke()
+            window.navigate.assert_called_once_with("folha")
+            buttons["sair"].invoke()
+            window.on_close.assert_called_once()
         finally:
             window.destroy()
 

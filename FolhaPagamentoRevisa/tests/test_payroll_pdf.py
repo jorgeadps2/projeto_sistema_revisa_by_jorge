@@ -1,4 +1,5 @@
 import importlib.util
+import sqlite3
 import sys
 import tempfile
 import unittest
@@ -48,6 +49,55 @@ class PayrollPdfTests(unittest.TestCase):
         table = next(item for item in story if isinstance(item, APP.LongTable))
         return total, story, table, text, reader
 
+    def generate_payslip(self, loans):
+        connection = sqlite3.connect(":memory:")
+        self.addCleanup(connection.close)
+        connection.row_factory = sqlite3.Row
+        connection.executescript("""
+            CREATE TABLE employees (
+                id INTEGER PRIMARY KEY, role TEXT, code TEXT, admission_date TEXT
+            );
+            CREATE TABLE employee_loans (
+                id INTEGER PRIMARY KEY, employee_id INTEGER, principal REAL,
+                installment_count INTEGER, start_year INTEGER, start_month INTEGER,
+                kind TEXT, notes TEXT, settled_year INTEGER, settled_month INTEGER,
+                settlement_amount REAL
+            );
+            CREATE TABLE employee_loan_adjustments (
+                id INTEGER PRIMARY KEY, loan_id INTEGER, principal REAL,
+                installment_count INTEGER, start_year INTEGER, start_month INTEGER
+            );
+            INSERT INTO employees VALUES (1, '', '001', '');
+        """)
+        connection.executemany(
+            """INSERT INTO employee_loans(
+                id,employee_id,principal,installment_count,start_year,start_month,
+                kind,notes,settled_year,settled_month,settlement_amount)
+                VALUES(?,1,120,4,2026,10,?,?,NULL,NULL,NULL)""",
+            [(index, kind, "Adiantamento para compra de material"
+              if kind == APP.ADVANCE_KIND else "")
+             for index, kind in enumerate(loans, start=1)])
+        payroll_row = dict(
+            employee_id=1, name="Ana", notes="", salary=1000, pf=0,
+            overtime=0, vacation=0, meta=0, thirteenth=0, marmitex=10,
+            advances=30, pharmacy=20, loan=40, other_deductions=5, total=895)
+        path = self.path.with_name("payslip.pdf")
+        story = []
+        original_build = APP.SimpleDocTemplate.build
+
+        def build(document, flowables, **kwargs):
+            story.extend(deepcopy(flowables))
+            return original_build(document, flowables, **kwargs)
+
+        with patch.object(APP, "connect", return_value=connection), \
+                patch.object(APP.FolhaBase, "payroll_report_rows",
+                             return_value=({"status": "Fechada"}, [payroll_row])), \
+                patch.object(APP.FolhaBase, "pdf_page_header"), \
+                patch.object(APP.SimpleDocTemplate, "build", build):
+            self.app.write_payslips_pdf(2026, 10, str(path))
+        text = "\n".join(page.extract_text() for page in PdfReader(path).pages)
+        return text, story
+
     def test_sober_report_preserves_rubrics_with_and_without_thirteenth(self):
         for month, earnings_count in ((10, 5), (11, 6), (12, 6)):
             with self.subTest(month=month):
@@ -78,6 +128,8 @@ class PayrollPdfTests(unittest.TestCase):
                         self.assertGreaterEqual(cell.style.fontSize, reference_style.fontSize)
                         self.assertEqual(cell.style.fontName, reference_style.fontName)
                 self.assertIn("1.050,00", text)
+                if month in (11, 12):
+                    self.assertIn("500,00", text)
                 self.assertNotIn("em verde", text)
                 self.assertNotIn("em vermelho", text)
                 self.assertNotIn("Crédito", text)
@@ -139,6 +191,51 @@ class PayrollPdfTests(unittest.TestCase):
             with self.subTest(rows=len(rows)):
                 _, _, _, text, _ = self.generate(rows)
                 self.assertNotIn("Observações dos colaboradores", text)
+
+    def test_payslip_identifies_advance_as_advance(self):
+        text, story = self.generate_payslip([APP.ADVANCE_KIND])
+        self.assertIn("Demais descontos", text)
+        self.assertIn("Adiantamento Salarial", text)
+        self.assertIn("Adiantamento para compra de material", text)
+        self.assertIn("Observação", text)
+        self.assertNotIn("Detalhe", text)
+        self.assertNotIn("Valor emprestado", text)
+        deduction_table = next(
+            item for item in story
+            if isinstance(item, APP.Table)
+            and isinstance(item._cellvalues[0][0], APP.Paragraph)
+            and item._cellvalues[0][0].text == "Desconto")
+        advance_row = next(
+            row for row in deduction_table._cellvalues[1:]
+            if row[0].text == "Adiantamento Salarial")
+        observation = advance_row[2]
+        self.assertIn("Adiantamento para compra de material", observation.text)
+        self.assertNotIn("1/4", observation.text)
+        self.assertNotIn("R$", observation.text)
+
+    def test_payslip_separates_loans_from_other_deductions(self):
+        text, story = self.generate_payslip(
+            [APP.LOAN_KIND, APP.ADVANCE_KIND])
+        self.assertIn("Empréstimos", text)
+        self.assertIn("Valor emprestado", text)
+        self.assertIn("Demais descontos", text)
+        for label in ("Marmitex", "Farmácia", "Adiantamento Salarial",
+                      "Outros descontos"):
+            self.assertIn(label, text)
+        deduction_table = next(
+            item for item in story
+            if isinstance(item, APP.Table)
+            and isinstance(item._cellvalues[0][0], APP.Paragraph)
+            and item._cellvalues[0][0].text == "Desconto")
+        header = deduction_table._cellvalues[0]
+        self.assertEqual(header[2].text, "Observação")
+        body = deduction_table._cellvalues[1]
+        self.assertEqual(
+            len({(cell.style.fontName, cell.style.fontSize) for cell in body}),
+            1)
+        self.assertEqual(
+            {cell.style.fontSize for cell in header},
+            {cell.style.fontSize for cell in body})
 
     def test_long_observations_and_many_employees_span_pages(self):
         rows = [self.row(f"Colaborador {index}", "Observacao extensa. " * 400)

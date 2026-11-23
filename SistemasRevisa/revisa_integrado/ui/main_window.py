@@ -24,10 +24,11 @@ LOGIN_BRAND_WIDTH = 180
 LOGIN_BRAND_GAP = 14
 STARTUP_SPLASH_DURATION_MS = 5000
 STARTUP_SPLASH_COMPLETE_MS = 500
-STARTUP_SPLASH_WIDTH = 500
+STARTUP_SPLASH_WIDTH = 420
 STARTUP_SPLASH_HEIGHT = 180
 STARTUP_SPLASH_WINDOW_HEIGHT = STARTUP_SPLASH_HEIGHT
 LEGACY_PROCESSES = {
+    "FolhaPagamentoRevisa_1_141.exe": (MODULE_FOLHA,),
     "FolhaPagamentoRevisa_1_140.exe": (MODULE_FOLHA,),
     "Controle_Energia_Agua.exe": (MODULE_ENERGIA,),
     "GerenciadorAdministrativoRevisa.exe": (MODULE_FOLHA, MODULE_ENERGIA),
@@ -166,14 +167,15 @@ class MainWindow(tk.Tk):
             f"{STARTUP_SPLASH_WIDTH}x{STARTUP_SPLASH_WINDOW_HEIGHT}"
         )
         from PIL import Image, ImageTk
+
+        self.startup_splash_robot = None
         try:
             with Image.open(paths.asset("robo_desenvolvedor.png")) as source:
-                image = source.convert("RGBA")
-                image.thumbnail((40, 40), Image.Resampling.LANCZOS)
-            self.startup_splash_image = ImageTk.PhotoImage(image, master=self)
+                robot = source.convert("RGBA")
+                robot.thumbnail((26, 26), Image.Resampling.LANCZOS)
+            self.startup_splash_robot = ImageTk.PhotoImage(robot, master=self)
         except OSError:
             self.log.exception("Falha ao carregar o robô da tela de abertura")
-            raise
         self.startup_splash_label = tk.Canvas(
             self,
             width=STARTUP_SPLASH_WIDTH,
@@ -196,78 +198,66 @@ class MainWindow(tk.Tk):
             return
         progress = max(0, min(100, int(progress)))
         canvas.delete("all")
-        canvas.create_image(
-            38, 38, image=self.startup_splash_image, anchor="center",
+        left, right = 20, STARTUP_SPLASH_WIDTH - 20
+        canvas.create_oval(left, 18, left + 7, 25, fill=t.SUCCESS, outline="")
+        canvas.create_text(left + 14, 22, text=APP_NAME, anchor="w",
+                           fill=t.TEXT, font=("Segoe UI", -12, "bold"))
+        robot = getattr(self, "startup_splash_robot", None)
+        title_x = left
+        if robot is not None:
+            canvas.create_image(left, 46, anchor="w", image=robot)
+            title_x += robot.width() + 8
+        canvas.create_text(
+            title_x, 46, text="Preparando o sistema", anchor="w",
+            fill=t.TEXT, font=("Segoe UI", -21, "bold"),
         )
         canvas.create_text(
-            72, 29, text="Preparando o sistema", anchor="w",
-            fill=t.TEXT, font=("Segoe UI Semibold", 14, "bold"),
+            left, 70, text="Verificando arquivos e módulos.",
+            anchor="w", fill=t.TEXT, font=("Segoe UI", -13),
         )
         canvas.create_text(
-            72, 51, text="Preparando os módulos e verificando os arquivos.",
-            anchor="w", fill=t.MUTED, font=("Segoe UI", 9),
+            left, 87, text="Progresso da inicialização", anchor="w",
+            fill=t.TEXT, font=("Segoe UI", -12),
         )
         canvas.create_text(
-            20, 76, text="Carregando recursos", anchor="w",
-            fill=t.TEXT, font=("Segoe UI Semibold", 9, "bold"),
-        )
-        canvas.create_text(
-            STARTUP_SPLASH_WIDTH - 20, 76, text=f"{progress}%", anchor="e",
-            fill=t.PRIMARY, font=("Segoe UI Semibold", 10, "bold"),
+            right, 87, text=f"{progress}%", anchor="e",
+            fill=t.NAVY, font=("Segoe UI", -14, "bold"),
         )
         canvas.create_rectangle(
-            20, 88, STARTUP_SPLASH_WIDTH - 20, 100,
+            left, 99, right, 108,
             fill=t.STATUS_BG, outline="",
         )
-        progress_width = STARTUP_SPLASH_WIDTH - 40
-        fill_right = 20 + progress_width * progress / 100
+        fill_right = left + round((right - left) * progress / 100)
         if progress:
             canvas.create_rectangle(
-                20, 88, fill_right, 100, fill=t.PRIMARY, outline="",
+                left, 99, fill_right, 108, fill=t.YELLOW, outline="",
             )
 
-        stages = (
-            (20, "Verificando arquivos"),
-            (170, "Preparando módulos"),
-            (320, "Finalizando abertura"),
-        )
+        stages = ("Verificação", "Preparação", "Finalização")
         active_stage = min(progress // 35, len(stages))
         if progress >= 100:
             active_stage = len(stages)
-        for index, (x, label) in enumerate(stages):
+        for index, label in enumerate(stages):
+            x = left + index * (right - left) // len(stages)
             complete = index < active_stage
             current = index == active_stage
-            color = t.SUCCESS if complete else (
-                t.PRIMARY if current else t.MUTED
-            )
+            canvas.create_oval(x, 118, x + 12, 130, outline=t.MUTED,
+                               fill=t.NAVY if complete else t.YELLOW if current else t.SURFACE)
             if complete:
                 canvas.create_text(
-                    x + 5, 120, text="✓", anchor="center",
-                    fill=color, font=("Segoe UI", 10, "bold"),
-                )
-            else:
-                canvas.create_oval(
-                    x + 1, 116, x + 9, 124,
-                    outline=color, width=2,
+                    x + 6, 124, text="✓", anchor="center",
+                    fill=t.SURFACE, font=("Segoe UI", -9, "bold"),
                 )
             canvas.create_text(
-                x + 16, 120, text=label, anchor="w",
-                fill=t.PRIMARY_DARK if current else t.MUTED,
-                font=("Segoe UI", 8, "bold" if current else "normal"),
+                x + 17, 124, text=label, anchor="w",
+                fill=t.TEXT,
+                font=("Segoe UI", -12, "bold" if current else "normal"),
             )
 
-        canvas.create_line(0, 139, STARTUP_SPLASH_WIDTH, 139, fill=t.BORDER)
+        canvas.create_line(left, 144, right, 144, fill=t.PAPER_BORDER)
         canvas.create_text(
-            20, 160, text="REVISA", anchor="w",
-            fill=t.PRIMARY_DARK, font=("Segoe UI Semibold", 8, "bold"),
-        )
-        canvas.create_text(
-            64, 160, text="Aguarde a conclusão da inicialização", anchor="w",
-            fill=t.MUTED, font=("Segoe UI", 8),
-        )
-        canvas.create_text(
-            STARTUP_SPLASH_WIDTH - 20, 160, text="INICIANDO...", anchor="e",
-            fill=t.MUTED, font=("Segoe UI Semibold", 7, "bold"),
+            left, 160, text="Aguarde a tela de acesso.", anchor="w",
+            fill=t.TEXT, font=("Segoe UI", -12),
         )
         self.update_idletasks()
 
@@ -295,6 +285,7 @@ class MainWindow(tk.Tk):
         if splash_label is not None and splash_label.winfo_exists():
             splash_label.destroy()
         self.startup_splash_label = None
+        self.startup_splash_robot = None
         self.attributes("-topmost", False)
         self.overrideredirect(False)
         self.title("Sistema Interno")
@@ -420,34 +411,34 @@ class MainWindow(tk.Tk):
         self.current = None
         outer = tk.Frame(self, bg=t.BG)
         outer.pack(fill="both", expand=True)
-        box = tk.Frame(outer, bg=t.SURFACE, highlightbackground=t.BORDER, highlightthickness=1)
+        box = tk.Frame(outer, bg=t.SURFACE, highlightbackground=t.PAPER_BORDER, highlightthickness=1)
         box.pack(fill="both", expand=True)
         box.columnconfigure(0, weight=1)
         box.rowconfigure(2, weight=1)
-        header = tk.Frame(box, bg=t.PRIMARY_DARK, height=30)
+        header = tk.Frame(box, bg=t.NAVY, height=34)
         header.grid(row=0, column=0, sticky="ew")
         header.pack_propagate(False)
-        heading = tk.Frame(header, bg=t.PRIMARY_DARK)
+        heading = tk.Frame(header, bg=t.NAVY)
         heading.pack(side="left", fill="y", padx=12, pady=3)
         title = t.label(heading, "ACESSO AO SISTEMA", 9, "#FFFFFF", True,
-                        bg=t.PRIMARY_DARK)
+                        bg=t.NAVY)
         title.pack(anchor="w")
         for handle in (header, heading, title):
             handle.bind("<ButtonPress-1>", self._start_login_drag)
             handle.bind("<B1-Motion>", self._drag_login)
         self.login_close_button = tk.Button(
-            header, text="×", command=self.on_close, bg=t.PRIMARY_DARK,
+            header, text="×", command=self.on_close, bg=t.NAVY,
             fg="#FFFFFF", activebackground=t.DANGER, activeforeground="#FFFFFF",
             relief="flat", borderwidth=0, font=("Segoe UI", 12),
             cursor="hand2", padx=10, pady=0, takefocus=True)
         self.login_close_button.pack(side="right", fill="y")
-        tk.Frame(box, bg=t.ORANGE, height=2).grid(row=1, column=0, sticky="ew")
+        tk.Frame(box, bg=t.YELLOW, height=2).grid(row=1, column=0, sticky="ew")
         content = tk.Frame(box, bg=t.SURFACE, padx=0, pady=0)
         content.grid(row=2, column=0, sticky="nsew")
         content.columnconfigure(1, weight=1)
         content.rowconfigure(0, weight=1)
         footer = self._build_login_footer(box)
-        tk.Frame(box, bg=t.ORANGE, height=2).grid(row=3, column=0, sticky="ew")
+        tk.Frame(box, bg=t.YELLOW, height=2).grid(row=3, column=0, sticky="ew")
         footer.grid(row=4, column=0, sticky="ew")
         brand = tk.Frame(content, bg=t.SURFACE_ALT, width=LOGIN_BRAND_WIDTH)
         brand.grid(row=0, column=0, sticky="ns", padx=(0, LOGIN_BRAND_GAP))
@@ -461,7 +452,7 @@ class MainWindow(tk.Tk):
                 bg=t.SURFACE_ALT, justify="center").pack(fill="x")
         t.label(brand_content, "Gestão integrada · Revisa", 8, t.MUTED,
                 bg=t.SURFACE_ALT).pack()
-        tk.Frame(brand_content, bg=t.ORANGE, width=34, height=3).pack(pady=(7, 0))
+        tk.Frame(brand_content, bg=t.YELLOW, width=34, height=3).pack(pady=(7, 0))
         body = tk.Frame(content, bg=t.SURFACE)
         body.grid(row=0, column=1, sticky="nsew", padx=(0, 14), pady=4)
         self.login_body = body
@@ -529,12 +520,13 @@ class MainWindow(tk.Tk):
             t.label(form, "Cadastre a senha principal", 14, t.TEXT, True).pack(anchor="w", pady=(2, 4))
             t.label(form, f"Usuário: {USER_NAME}", 9, t.MUTED).pack(anchor="w", pady=(0, 5))
         else:
+            t.label(form, "Entrar no sistema", 13, t.NAVY, True).pack(anchor="w", pady=(0, 4))
             t.label(form, "Empresa", 9, t.TEXT, True).pack(anchor="w")
             company = t.entry(form, width=24)
             company.insert(0, "FTS Distribuidora de Peças Ltda")
             company.configure(state="readonly", readonlybackground=t.SURFACE_ALT,
                               font=("Segoe UI", 9))
-            company.pack(fill="x", pady=(2, 16), ipady=2)
+            company.pack(fill="x", pady=(2, 5), ipady=2)
         command = self.do_create_password if create else self.do_login
         self.login_fields = []
         if create:
@@ -561,7 +553,7 @@ class MainWindow(tk.Tk):
             user.grid(row=1, column=0, sticky="nsew")
             field = t.entry(actions, show="•", width=9)
             field.grid(row=1, column=1, sticky="nsew", padx=6)
-            self.login_button = t.button(actions, "Entrar", command)
+            self.login_button = t.button(actions, "Entrar", command, kind="revisa")
             self.login_button.configure(pady=3, width=6)
             self.login_button.grid(row=1, column=2, sticky="nsew")
             self.login_show_button = t.button(
@@ -592,7 +584,7 @@ class MainWindow(tk.Tk):
         self.geometry(f"+{event.x_root - offset_x}+{event.y_root - offset_y}")
 
     def _build_login_footer(self, parent):
-        footer = tk.Frame(parent, bg=t.PRIMARY_DARK, height=76)
+        footer = tk.Frame(parent, bg=t.NAVY, height=76)
         footer.rowconfigure(0, weight=1)
         for column in (0, 2):
             footer.columnconfigure(column, weight=1, uniform="login_footer")
@@ -605,9 +597,9 @@ class MainWindow(tk.Tk):
             if index:
                 tk.Frame(footer, bg=t.BORDER, width=1).grid(
                     row=0, column=index * 2 - 1, sticky="ns", pady=9)
-            cell = tk.Frame(footer, bg=t.PRIMARY_DARK, padx=7, pady=5)
+            cell = tk.Frame(footer, bg=t.NAVY, padx=7, pady=5)
             cell.grid(row=0, column=index * 2, sticky="nsew")
-            content = tk.Frame(cell, bg=t.PRIMARY_DARK)
+            content = tk.Frame(cell, bg=t.NAVY)
             content.pack(expand=True)
             cell = content
             if index == 0:
@@ -621,14 +613,14 @@ class MainWindow(tk.Tk):
                     except OSError:
                         self.log.exception("Falha ao carregar a imagem do desenvolvedor")
                         raise
-                tk.Label(cell, image=self.images["developer_robot"], bg=t.PRIMARY_DARK,
+                tk.Label(cell, image=self.images["developer_robot"], bg=t.NAVY,
                          borderwidth=0).pack(side="left", padx=(0, 6))
-                text_cell = tk.Frame(cell, bg=t.PRIMARY_DARK)
+                text_cell = tk.Frame(cell, bg=t.NAVY)
                 text_cell.pack(side="left")
                 cell = text_cell
-            t.label(cell, heading, 8, "#D6EAFF", True, bg=t.PRIMARY_DARK).pack(anchor="center")
+            t.label(cell, heading, 8, t.NAV_MUTED, True, bg=t.NAVY).pack(anchor="center")
             if value:
-                t.label(cell, value, 8, color, bg=t.PRIMARY_DARK,
+                t.label(cell, value, 8, color, bg=t.NAVY,
                         wraplength=210,
                         justify="center").pack(anchor="center", pady=(2, 0))
             else:
@@ -641,7 +633,7 @@ class MainWindow(tk.Tk):
     @staticmethod
     def _login_status_badge(parent, text, color):
         palette = {
-            t.SUCCESS: ("#DCFCE7", "#166534"),
+            t.SUCCESS: (t.NAVY_HOVER, t.YELLOW),
             t.DANGER: ("#FEE2E2", "#991B1B"),
             t.WARNING: ("#FEF3C7", "#92400E"),
             t.MUTED: ("#E2E8F0", "#334155"),
@@ -732,8 +724,8 @@ class MainWindow(tk.Tk):
         self._clear()
         self.apply_shell_style()
         self._build_menu()
-        self._build_toolbar()
         self._build_status_bar()
+        self._build_toolbar()
         self.content = tk.Frame(self, bg=t.BG)
         self.content.pack(side="top", fill="both", expand=True)
         self.update_header()
@@ -852,54 +844,59 @@ class MainWindow(tk.Tk):
         self.menu_bar = bar
 
     def _build_toolbar(self):
-        bar = tk.Frame(self, bg="#F0F0F0", height=72, relief="groove", bd=1)
+        bar = tk.Frame(self, bg=t.NAVY, padx=12, pady=10)
         self.shell_toolbar = bar
-        bar.pack(side="top", fill="x")
-        bar.pack_propagate(False)
-        bar.grid_propagate(False)
-        shortcuts = (
-            ("Painel", "painel", lambda: self.navigate("painel")),
-            ("Folha", "folha", lambda: self.navigate(MODULE_FOLHA)),
-            ("Energia e Água", "energia", lambda: self.navigate(MODULE_ENERGIA)),
-            ("Backups", "backups", lambda: self.navigate("backups")),
-            ("Administração", "admin", lambda: self.navigate("admin")),
-            ("Sobre", "sobre", lambda: self.navigate("sobre")),
-            ("Sair", "sair", self.on_close),
-        )
-        buttons = []
-        for label, icon, command in shortcuts:
-            image = self._icon(icon, 20)
+        bar.pack(side="left", fill="y")
+        logo = self._logo("sidebar", (124, 92))
+        self.sidebar_logo = None
+        if logo:
+            self.sidebar_logo = tk.Label(bar, image=logo, bg=t.NAVY, borderwidth=0)
+            self.sidebar_logo.pack(anchor="w", padx=8, pady=(4, 4))
+        t.label(bar, APP_NAME, 12, t.SURFACE, True, bg=t.NAVY).pack(anchor="w", padx=8)
+        t.label(bar, "Gestão integrada", 8, t.NAV_MUTED, bg=t.NAVY).pack(anchor="w", padx=8, pady=(0, 7))
+        self.sidebar_buttons = {}
+
+        def nav_button(key, label, icon, command, parent=bar):
+            image = self._icon(icon, 16, gap=8)
             button = tk.Button(
-                bar, text=label, image=image or "", compound="top", command=command,
-                bg="#F0F0F0", fg=t.TEXT, activebackground="#DCEBFA", activeforeground=t.TEXT,
-                relief="flat", bd=0, font=("Segoe UI", 8), padx=2, pady=3,
-                anchor="center",
-                highlightthickness=0, cursor="hand2",
+                parent, text=label, image=image or "", compound="left", command=command,
+                bg=t.NAVY, fg=t.NAV_TEXT, activebackground=t.NAVY_HOVER, activeforeground=t.SURFACE,
+                relief="flat", bd=0, font=t.FONT_SMALL, padx=17, pady=8,
+                anchor="w", highlightthickness=1, highlightbackground=t.NAVY,
+                highlightcolor=t.YELLOW, cursor="hand2",
             )
-            buttons.append(button)
-            button.bind("<Enter>", lambda _event, item=button: item.configure(bg="#E3EDF7"))
-            button.bind("<Leave>", lambda _event, item=button: item.configure(bg="#F0F0F0"))
-        bar.update_idletasks()
-        bar.grid_rowconfigure(0, weight=1)
-        for column, button in enumerate(buttons):
-            button.grid(row=0, column=column, sticky="nsew", padx=8)
-        self._layout_toolbar()
+            self.sidebar_buttons[key] = button
+            button.bind("<Enter>", lambda _e: self._paint_sidebar_button(key, hover=True))
+            button.bind("<Leave>", lambda _e: self._paint_sidebar_button(key))
+            return button
+
+        for heading, items in (("PRINCIPAL", NAVIGATION[:3]), ("SISTEMA", NAVIGATION[3:])):
+            t.label(bar, heading, 8, t.NAV_MUTED, True, bg=t.NAVY).pack(anchor="w", padx=8, pady=(6, 2))
+            for key, label, icon in items:
+                nav_button(key, label, icon, lambda item=key: self.navigate(item)).pack(fill="x", pady=3)
+
+        footer = tk.Frame(bar, bg=t.NAVY)
+        footer.pack(side="bottom", fill="x", pady=(8, 0))
+        tk.Frame(footer, bg=t.NAVY_HOVER, height=1).pack(fill="x", pady=(0, 6))
+        self.sidebar_user = t.label(footer, "", 9, t.SURFACE, True, bg=t.NAVY)
+        self.sidebar_user.pack(anchor="w", padx=8)
+        t.label(footer, f"Versão {APP_VERSION}", 8, t.NAV_MUTED, bg=t.NAVY).pack(anchor="w", padx=8)
+        nav_button("sair", "Sair", "sair", self.on_close, footer).pack(fill="x", pady=(6, 0))
+        self.sidebar_spacing = None
         self.compact_layout = None
         if not getattr(self, "responsive_binding", None):
             self.responsive_binding = self.bind("<Configure>", self._on_window_resize, add="+")
         self._update_responsive_layout()
 
-    def _layout_toolbar(self):
-        bar = getattr(self, "shell_toolbar", None)
-        if bar is None or not bar.winfo_exists():
+    def _paint_sidebar_button(self, key, *, hover=False):
+        button = getattr(self, "sidebar_buttons", {}).get(key)
+        if button is None or not button.winfo_exists():
             return
-        buttons = bar.winfo_children()
-        if not buttons:
-            return
-        for button in buttons:
-            button.configure(font=("Segoe UI", 8), padx=2, pady=3)
-        for column in range(len(buttons)):
-            bar.grid_columnconfigure(column, uniform="toolbar")
+        selected = key == self.current
+        bg = t.YELLOW if selected else t.NAVY_HOVER if hover else t.NAVY
+        fg = t.NAVY if selected else t.NAV_TEXT
+        button.configure(bg=bg, fg=fg, activebackground=t.YELLOW if selected else t.NAVY_HOVER,
+                         activeforeground=fg)
 
     def _on_window_resize(self, event):
         if event.widget is self:
@@ -909,7 +906,20 @@ class MainWindow(tk.Tk):
         bar = getattr(self, "shell_toolbar", None)
         if bar is None or not bar.winfo_exists():
             return
-        self._layout_toolbar()
+        logical_height = self.winfo_height() * 96 / self.winfo_fpixels("1i")
+        spacing = (2, 1) if logical_height < 520 else (13, 5) if logical_height >= 800 else (8, 3)
+        if spacing != self.sidebar_spacing:
+            self.sidebar_spacing = spacing
+            padding, gap = spacing
+            if self.sidebar_logo is not None:
+                logo = (self._logo("sidebar_small", (64, 48)) if padding == 2
+                        else self._logo("sidebar", (124, 92)))
+                self.sidebar_logo.configure(image=logo or "")
+            for key, _label, _icon in NAVIGATION:
+                button = self.sidebar_buttons[key]
+                button.configure(pady=padding)
+                button.pack_configure(pady=gap)
+            self.sidebar_buttons["sair"].configure(pady=min(8, padding))
         compact = self.winfo_width() < 1200 or self.winfo_height() < 800
         changed = compact != self.compact_layout
         self.compact_layout = compact
@@ -1022,6 +1032,11 @@ class MainWindow(tk.Tk):
             self.status_user.configure(text=f"Usuário: {self.session.user}  •  sessão desde {started}")
             title = getattr(self, "current_title", PAGE_TITLES.get(self.current, "—"))
             self.status_module.configure(text=f"Módulo: {title}")
+        sidebar_user = getattr(self, "sidebar_user", None)
+        if sidebar_user is not None and sidebar_user.winfo_exists():
+            sidebar_user.configure(text=f"Usuário: {self.session.user}")
+        for key in getattr(self, "sidebar_buttons", {}):
+            self._paint_sidebar_button(key)
 
     def _show_frame(self, key, frame, title):
         for other in list(self.pages.values()) + [m["container"] for m in self.modules.values()]:
@@ -1058,6 +1073,10 @@ class MainWindow(tk.Tk):
                     "admin": (self.build_admin, "Administração e Segurança"),
                     "sobre": (self.build_about, "Sobre")}
         builder, title = builders[key]
+        if key == "painel" and key in self.pages:
+            self.apply_shell_style()
+            self._show_frame(key, self.pages[key], title)
+            return
         old = self.pages.pop(key, None)
         if old is not None:
             old.destroy()

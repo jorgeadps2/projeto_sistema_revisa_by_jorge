@@ -13,10 +13,10 @@ from ..modules import energia, folha
 from . import theme as t
 
 
-def _scrollable(frame):
-    canvas = tk.Canvas(frame, bg=t.BG, highlightthickness=0, bd=0)
+def _scrollable(frame, bg=t.BG):
+    canvas = tk.Canvas(frame, bg=bg, highlightthickness=0, bd=0)
     bar = ttk.Scrollbar(frame, orient="vertical", command=canvas.yview)
-    inner = tk.Frame(canvas, bg=t.BG, padx=20, pady=16)
+    inner = tk.Frame(canvas, bg=bg, padx=20, pady=16)
     window = canvas.create_window(0, 0, window=inner, anchor="nw")
     canvas.configure(yscrollcommand=bar.set)
     canvas.pack(side="left", fill="both", expand=True)
@@ -117,39 +117,51 @@ def _verify_sync_password(self):
 
 # ---------------------------------------------------------------------- painel
 def build_dashboard(self, frame):
-    canvas = tk.Frame(frame, bg="#F3F6FB")
-    canvas.pack(fill="both", expand=True)
-    logo_panel = tk.Frame(canvas, bg=t.SURFACE)
-    logo_panel.place(relx=0.5, rely=0.5, anchor="center")
-    logo_label = tk.Label(logo_panel, bg=t.SURFACE, borderwidth=0)
-    logo_label.pack()
+    frame.configure(bg=t.PAPER)
+    inner = _scrollable(frame, bg=t.PAPER)
+    header = tk.Frame(inner, bg=t.PAPER)
+    header.pack(fill="x", pady=(9, 22))
+    t.label(header, "Painel geral", 23, t.NAVY, True, bg=t.PAPER).pack(anchor="w")
+    t.label(header, "Acesse os módulos pelo menu lateral.", 10, t.MUTED,
+            bg=t.PAPER).pack(anchor="w")
 
-    try:
-        from PIL import Image, ImageTk
+    t.label(inner, "Resumo do sistema", 13, t.NAVY, True, bg=t.PAPER).pack(anchor="w")
+    metrics = tk.Frame(inner, bg=t.PAPER)
+    metrics.pack(fill="x", pady=(8, 14))
+    for column, (label, value, detail) in enumerate((
+        ("Módulos integrados", "02", "Folha de Pagamento e Energia e Água"),
+        ("Recursos de documentos", "PDF", "Relatórios dos módulos"),
+        ("Versão do sistema", APP_VERSION, APP_NAME),
+    )):
+        metrics.columnconfigure(column, weight=1, uniform="metric")
+        card = t.card(metrics, padding=10)
+        card.grid(row=0, column=column, sticky="nsew", padx=(0, 8) if column < 2 else 0)
+        caption = t.label(card, label, 9, t.MUTED, justify="left")
+        caption.pack(anchor="w")
+        t.label(card, value, 19, t.NAVY, True).pack(anchor="w", pady=3)
+        subtitle = t.label(card, detail, 9, t.MUTED, justify="left")
+        subtitle.pack(anchor="w")
+        def wrap_metric(event, labels=(caption, subtitle)):
+            for label in labels:
+                label.configure(wraplength=max(1, event.width - 22))
 
-        with Image.open(paths.asset("logo_central_revisa.png")) as source:
-            original = source.convert("RGBA")
-    except OSError:
-        self.log.exception("Falha ao carregar a logo do painel principal")
-        t.label(canvas, "Não foi possível carregar a imagem do painel.", 11, t.DANGER,
-                bg="#F3F6FB").place(relx=0.5, rely=0.5, anchor="center")
-        return
+        card.bind("<Configure>", wrap_metric)
 
-    last_size = None
-
-    def resize_logo(event):
-        nonlocal last_size
-        size = min(int(event.width * 0.5), int(event.height * 0.96))
-        if size < 1 or size == last_size:
-            return
-        last_size = size
-        image = original.copy()
-        image.thumbnail((size, size), Image.Resampling.LANCZOS)
-        photo = ImageTk.PhotoImage(image, master=self)
-        self.images["dashboard"] = photo
-        logo_label.configure(image=photo, width=image.width, height=image.height)
-
-    canvas.bind("<Configure>", resize_logo)
+    resources = t.card(inner, padding=12)
+    resources.pack(fill="x")
+    t.label(resources, "Recursos disponíveis", 11, t.NAVY, True).pack(anchor="w")
+    t.label(resources, "Ferramentas para organizar os dados e as rotinas.", 9,
+            t.MUTED).pack(anchor="w", pady=(2, 7))
+    for title, detail in (
+        ("Backups verificáveis", "Cópias de segurança dos dados"),
+        ("Sincronização entre computadores", "Transferência de dados integrada"),
+        ("Relatórios da Folha e de Energia e Água", "Geração em PDF"),
+    ):
+        row = tk.Frame(resources, bg=t.SURFACE)
+        row.pack(fill="x")
+        tk.Frame(row, bg=t.PAPER_BORDER, height=1).pack(fill="x")
+        t.label(row, title, 9, t.TEXT, True).pack(side="left", pady=8)
+        t.label(row, detail, 9, t.MUTED).pack(side="right", pady=8)
 
 
 # ---------------------------------------------------------------------- backups e transferência

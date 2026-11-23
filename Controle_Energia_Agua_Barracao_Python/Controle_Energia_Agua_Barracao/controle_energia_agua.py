@@ -563,6 +563,10 @@ class App:
         self.root.option_add("*TCombobox*Listbox.selectBackground","#dce7f0")
         self.root.option_add("*TCombobox*Listbox.selectForeground","#25313c")
 
+        if self.embutido:
+            from revisa_integrado.ui.action_layout import configure_module_actions
+            configure_module_actions(s)
+
     def configurar_estilo_formulario(self,win):
         win.configure(bg=FUNDO)
         style=ttk.Style(win)
@@ -587,10 +591,10 @@ class App:
         from revisa_integrado.ui.action_layout import configure_form
         return configure_form(form,option,*args)
 
-    def _group_actions(self,parent,title):
+    def _group_actions(self,parent,title,*,primary=None):
         if self.embutido:
             from revisa_integrado.ui.action_layout import group_actions
-            return group_actions(parent,title)
+            return group_actions(parent,title,primary=primary)
 
     def _single_action(self,parent,title,command):
         if self.embutido:
@@ -599,7 +603,7 @@ class App:
         return None
 
     def montar(self):
-        toolbar=ttk.Frame(self.root,style="Toolbar.TFrame",padding=(12,8))
+        toolbar=ttk.Frame(self.root,style="ModuleNav.TFrame" if self.embutido else "Toolbar.TFrame",padding=(12,8))
         toolbar.pack(fill="x")
         self.icones_navegacao=self.criar_icones_navegacao()
         self.botoes_navegacao={}
@@ -610,7 +614,7 @@ class App:
             navigation_labels.append((3, "Sobre"))
         for indice,texto in navigation_labels:
             botao=ttk.Button(
-                toolbar,text=texto,style="Toolbar.TButton",image=self.icones_navegacao[4 if indice==3 else indice],
+                toolbar,text=texto,style=self._estilo_navegacao(False),image=self.icones_navegacao[4 if indice==3 else indice],
                 compound="top",width=(14 if self.embutido else (8 if indice==3 else (22 if indice==0 else 14))),
                 command=lambda aba=indice:self.nb.select(aba),
             )
@@ -628,7 +632,7 @@ class App:
             self.botao_alterar_senha.pack(side="right",padx=(0,6))
         if self.embutido:
             self.aviso_aberto=tk.Label(
-                toolbar, text="", bg="#FFF7ED", fg="#9A3412",
+                toolbar, text="", bg="#B42318", fg="#FFFFFF",
                 font=("Segoe UI Semibold",9), anchor="w", justify="left",
                 padx=9, pady=5, relief="solid", bd=1, cursor="hand2",
             )
@@ -728,7 +732,12 @@ class App:
         selecionada=self.nb.index(self.nb.select())
         self.titulo_pagina.configure(text=self.nb.tab(selecionada,"text"))
         for indice,botao in self.botoes_navegacao.items():
-            botao.configure(style="ToolbarSelected.TButton" if indice==selecionada else "Toolbar.TButton")
+            botao.configure(style=self._estilo_navegacao(indice==selecionada))
+
+    def _estilo_navegacao(self,selecionada):
+        if self.embutido:
+            return "ModuleSelected.TButton" if selecionada else "ModuleNav.TButton"
+        return "ToolbarSelected.TButton" if selecionada else "Toolbar.TButton"
 
     def montar_sobre(self):
         ttk.Label(self.tab_sobre,text=APP_NAME,style="PageHeading.TLabel").pack(anchor="w",pady=(0,12))
@@ -870,7 +879,7 @@ class App:
         ttk.Button(f,text="Adicionar inquilino",command=self.adicionar_ocupante).pack(side="left")
         ttk.Button(f,text="Excluir inquilino selecionado",command=self.excluir_ocupante).pack(side="left",padx=8)
         ttk.Button(f,text="Ativar/desativar selecionado",command=self.alternar_ocupante).pack(side="left")
-        self._group_actions(f,"Inquilinos")
+        self._group_actions(f,"Inquilinos",primary="Adicionar inquilino")
         ttk.Label(
             self.tab_oc,
             text="Clique em uma cobrança para alternar Sim/Não. Clique na observação para editar. "
@@ -926,7 +935,7 @@ class App:
             ttk.Button(f,text="Abrir pasta de dados",command=self.abrir_pasta).pack(side="left",padx=8)
             ttk.Button(f,text="Alterar senha",command=lambda:solicitar_acesso(self.root,alterar=True)).pack(side="left",padx=8)
         ttk.Label(self.tab_rel,text=f"Banco de dados atual: {DB_PATH}",wraplength=1000).pack(anchor="w",pady=15)
-        self._group_actions(f,"Relatórios")
+        self._group_actions(f,"Relatórios",primary="Gerar relatório em PDF")
 
     def garantir_mes(self,ano,mes):
         self.conn.execute("INSERT OR IGNORE INTO meses(ano,mes,usar_rateio_despesas) VALUES(?,?,1)",(ano,mes));self.conn.commit()

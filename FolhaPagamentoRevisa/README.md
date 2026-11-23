@@ -23,6 +23,7 @@ A barra superior tem fundo no azul da logo Revisa (#004B97) e botões claros, co
   - Colaboradores ativos entram automaticamente na folha.
   - Lançamento de salário, PF/adicional, hora extra, férias, marmitex, vales, farmácia, empréstimo e outros descontos.
   - 13º salário nas folhas de novembro e dezembro.
+  - O botão **13º - Antares**, disponível somente em novembro e dezembro, importa o líquido de um PDF contábil separado para a coluna **13º salário**, sem alterar o salário mensal. O PDF do 13º fica armazenado separadamente do PDF mensal e ambos podem ser anexados aos demonstrativos de pagamento.
   - Fechar e reabrir folha (com registro do motivo). Folha fechada fica verde e bloqueada para edição; linhas que precisam de conferência ficam amarelas. A ação de quitação atualiza somente o desconto correspondente e mantém a folha fechada.
   - Colaboradores com observações no lançamento da competência aparecem com **uma bolinha vermelha (●), alinhada à direita após o nome**, em um espaço estreito sem título antes do salário, e linha laranja, inclusive em folhas fechadas. A mesma bolinha vermelha aparece antes de cada nome em **Observações dos colaboradores**, abaixo da tabela. Na tela, nomes permanecem pretos; créditos e total líquido ficam verdes, e débitos ficam vermelhos, inclusive na linha selecionada, como no PDF. As cores de fundo de revisão, fechamento e observações são preservadas. A marcação desaparece ao apagar a observação. Nomes cadastrados não são alterados.
   - No PDF **Folha a pagar**, créditos/proventos aparecem em verde e débitos/descontos em vermelho, com totais nas respectivas cores. A tabela usa linhas compactas, sem reduzir a fonte dos valores. A legenda fica à esquerda no início da página, antes do título, com bolinhas grandes: verde para Crédito e vermelha para Débito. Todas as somas do resumo usam o mesmo tamanho de fonte dos valores da tabela. Colaboradores com observações da competência recebem uma bolinha vermelha junto ao nome; os textos das observações aparecem abaixo do resumo, identificados pelo nome e pela mesma bolinha. Na seção, o nome usa fonte menor e o texto da observação, fonte maior.
@@ -51,7 +52,7 @@ A barra superior tem fundo no azul da logo Revisa (#004B97) e botões claros, co
   - A folha mensal reúne proventos e descontos em uma única tabela horizontal, em formato paisagem; o cabeçalho se repete nas páginas seguintes quando necessário.
   - Os demais relatórios são gerados em formato retrato, exceto o relatório anual de todos os colaboradores, que também usa paisagem para acomodar os valores mensais.
   - Folha mensal completa.
-  - Demonstrativo de pagamento por colaborador (inclui a situação do empréstimo, quando houver). Nas descrições de empréstimo e adiantamento, as parcelas previstas do mês são discriminadas com número e valor individual, incluindo quitações. A coluna de descontos mantém o valor efetivamente lançado na folha, inclusive ajustes manuais.
+  - Demonstrativo de pagamento por colaborador (inclui a situação do empréstimo, quando houver). Empréstimos têm uma tabela própria com parcelas e saldo; Marmitex, Farmácia, Adiantamento Salarial e outros descontos aparecem separados por tipo em outra tabela. As observações cadastradas nos adiantamentos aparecem na coluna **Observação**; parcelas e quitações permanecem detalhadas junto ao valor do adiantamento no cálculo. Os valores refletem o que foi lançado na folha, inclusive ajustes manuais.
   - Relatório anual: tabela única com a soma do ano de todos os colaboradores, ou meses lado a lado para um colaborador.
   - Relatório de colaboradores, de salários atualizados e relatórios de empréstimos e adiantamentos, com opção de período mensal.
   - Nos relatórios de empréstimos e adiantamentos, as colunas respeitam as margens e os textos e valores longos quebram dentro das células, sem sobreposição. As fontes das tabelas são de 5 a 5,5 pontos e há um espaço de 8 mm após cada tabela para separar melhor as seções.
@@ -72,10 +73,10 @@ Para gerar o executável com PyInstaller:
 
 ```powershell
 py -m pip install pyinstaller
-py -m PyInstaller --noconfirm --clean .\FolhaPagamentoRevisa_1_130.spec
+py -m PyInstaller --noconfirm --clean .\FolhaPagamentoRevisa_1_141.spec
 ```
 
-O executável gerado fica em `dist\FolhaPagamentoRevisa_1_130.exe`. Para atualizar a instalação local, feche o aplicativo e copie esse arquivo para a pasta do projeto como `FolhaPagamentoRevisa_1_130.exe` (usado pelo iniciador) e `FolhaPagamentoRevisa.exe`. Não substitua o banco de dados.
+O executável gerado fica em `dist\FolhaPagamentoRevisa_1_141.exe`. Para atualizar a instalação local, feche o aplicativo e copie esse arquivo para a pasta do projeto como `FolhaPagamentoRevisa_1_141.exe` (usado pelo iniciador) e `FolhaPagamentoRevisa.exe`. Não substitua o banco de dados.
 
 ## Dados
 
@@ -92,7 +93,7 @@ O executável gerado fica em `dist\FolhaPagamentoRevisa_1_130.exe`. Para atualiz
 | `Iniciar_Folha_Pagamento.bat` | Atalho para iniciar o programa |
 | `logo_revisa.png`, `folha_pagamento.ico` | Logo e ícone |
 | `requirements.txt` | Dependências (`reportlab`, `openpyxl`, `Pillow` e `pypdf`) |
-| `FolhaPagamentoRevisa_1_130.spec` | Configuração de build do executável, sem banco de dados embutido |
+| `FolhaPagamentoRevisa_1_141.spec` | Configuração de build do executável, sem banco de dados embutido |
 | `LEIA-ME.txt` | Manual de uso detalhado |
 | `HISTORICO_DO_PROJETO.md` | Histórico explicado desde o início do projeto |
 

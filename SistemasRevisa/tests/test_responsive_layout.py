@@ -22,6 +22,7 @@ class ResponsiveLayoutTests(unittest.TestCase):
         self.window.maxsize(3000, 2000)
         self.window.tk.call("tk", "scaling", 96 / 72)
         self.window.icon_images = {}
+        self.window.images = {}
         self.window.modules = {}
         self.window.current = None
         self.window.log = Mock()
@@ -33,10 +34,10 @@ class ResponsiveLayoutTests(unittest.TestCase):
         self.window._build_toolbar()
         self.window.update()
 
-    def test_toolbar_keeps_the_same_layout_across_resolutions_and_dpi(self):
+    def test_sidebar_actions_fit_across_resolutions_and_dpi(self):
         for width, height, dpi in (
-                (1024, 680, 96), (1024, 680, 144), (1366, 680, 120),
-                (1366, 680, 144), (1920, 1000, 96)):
+                (980, 600, 144), (1024, 680, 96), (1024, 680, 144), (1366, 680, 120),
+                (1366, 680, 144), (1366, 720, 144), (1920, 1000, 96)):
             with self.subTest(width=width, height=height, dpi=dpi):
                 self.window.shell_toolbar.destroy()
                 self.window.tk.call("tk", "scaling", dpi / 72)
@@ -44,16 +45,20 @@ class ResponsiveLayoutTests(unittest.TestCase):
                 self.window._build_toolbar()
                 self.window.update()
                 toolbar = self.window.shell_toolbar
-                self.assertEqual(toolbar.winfo_height(), 72)
-                buttons = toolbar.winfo_children()
+                buttons = list(self.window.sidebar_buttons.values())
                 self.assertEqual(len(buttons), 7)
                 self.assertEqual(len({button.winfo_width() for button in buttons}), 1)
                 self.assertTrue(all(button.winfo_viewable() for button in buttons))
-                self.assertTrue(all(button.cget("compound") == "top" for button in buttons))
-                self.assertTrue(all(int(button.cget("wraplength")) == 0 for button in buttons))
-                self.assertLessEqual(
-                    max(button.winfo_x() + button.winfo_width() for button in buttons),
-                    toolbar.winfo_width())
+                self.assertTrue(all(button.cget("compound") == "left" for button in buttons))
+                self.assertGreaterEqual(buttons[0].winfo_width(), 210)
+                self.assertGreaterEqual(buttons[0].winfo_height(), 40 if height >= 800 else 32)
+                minimum_gap = 2 if height < 520 * dpi / 96 else 6
+                self.assertGreaterEqual(buttons[1].winfo_y() - buttons[0].winfo_y()
+                                        - buttons[0].winfo_height(), minimum_gap)
+                for button in buttons:
+                    self.assertLessEqual(button.winfo_reqwidth(), button.winfo_width())
+                    self.assertLessEqual(button.winfo_rooty() + button.winfo_height(),
+                                         toolbar.winfo_rooty() + toolbar.winfo_height())
 
     def test_resizing_payroll_restores_large_layout_and_preserves_page_and_form(self):
         paths.ensure_module_paths()
@@ -82,7 +87,7 @@ class ResponsiveLayoutTests(unittest.TestCase):
             self.window.geometry("1920x1000")
             self.window.update()
             self.assertFalse(app.compact_layout)
-            self.assertEqual(self.window.shell_toolbar.winfo_height(), 72)
+            self.assertTrue(self.window.sidebar_buttons["folha"].winfo_viewable())
             self.assertEqual(ttk.Style(app).lookup("Treeview", "rowheight"), 30)
             self.assertGreaterEqual(app.scroll_host.winfo_rooty() - compact_top, 40)
             self.assertGreaterEqual(
@@ -106,6 +111,19 @@ class ResponsiveLayoutTests(unittest.TestCase):
             self.assertEqual(ttk.Style(app).lookup("Treeview", "rowheight"), 24)
             self.assertEqual(self.errors, [])
             app.destroy()
+
+    def test_dashboard_shows_summary_and_resources_without_duplicate_controls(self):
+        frame = tk.Frame(self.window)
+        frame.pack(fill="both", expand=True)
+        self.window.build_dashboard(frame)
+        self.window.update()
+        widgets = list(self.descendants(frame))
+        self.assertFalse(any(isinstance(widget, (tk.Entry, tk.Menubutton)) for widget in widgets))
+        labels = {widget.cget("text") for widget in widgets
+                  if isinstance(widget, tk.Label) and widget.winfo_viewable()}
+        self.assertTrue({"Resumo do sistema", "Backups verificáveis", "Geração em PDF"} <= labels)
+        frame.destroy()
+        self.assertEqual(self.errors, [])
 
     @staticmethod
     def descendants(widget):

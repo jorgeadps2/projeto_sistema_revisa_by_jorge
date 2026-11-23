@@ -6,7 +6,25 @@ from . import theme as t
 from .icons import photo
 
 
-def group_actions(parent, title, command=None):
+def configure_module_actions(style):
+    style.configure("ModuleNav.TFrame", background=t.PAPER)
+    for name, selected, padding in (
+        ("ModuleNav.TButton", False, (10, 6)),
+        ("ModuleSelected.TButton", True, (10, 6)),
+        ("Compact.ModuleNav.TButton", False, (6, 3)),
+        ("Compact.ModuleSelected.TButton", True, (6, 3)),
+        ("ModulePrimary.TButton", False, (10, 6)),
+    ):
+        normal = t.YELLOW if selected else t.SURFACE
+        hover = t.YELLOW_HOVER if selected else t.YELLOW
+        style.configure(name, background=normal, foreground=t.NAVY, padding=padding,
+                        font=t.FONT_BOLD, bordercolor=t.YELLOW if selected else t.PAPER_BORDER,
+                        lightcolor=normal, darkcolor=normal, focuscolor=t.NAVY, relief="flat")
+        style.map(name, background=[("disabled", t.STATUS_BG), ("pressed", t.YELLOW_HOVER), ("active", hover)],
+                  foreground=[("disabled", t.MUTED), ("active", t.NAVY)])
+
+
+def group_actions(parent, title, command=None, *, primary=None):
     sources = [
         child for child in parent.winfo_children()
         if isinstance(child, (ttk.Button, ttk.Menubutton))
@@ -14,24 +32,30 @@ def group_actions(parent, title, command=None):
     ]
     if not sources:
         return
+    for source in sources:
+        if (command is None and isinstance(source, ttk.Button)
+                and source.winfo_manager() == "pack" and source.cget("text") == primary):
+            source.configure(style="ModulePrimary.TButton")
+            source.pack(side="left", padx=(0, 10), pady=4)
+            source._grouped_action = True
+            sources.remove(source)
+            break
+    if not sources:
+        return
     trigger_class = tk.Button if command is not None else tk.Menubutton
     trigger = trigger_class(
-        parent, text=f"{title}  ▾", bg=t.HOVER, fg=t.PRIMARY_DARK,
-        activebackground=t.SELECTED, activeforeground=t.PRIMARY_DARK,
+        parent, text=f"{title}  ▾", bg=t.SURFACE, fg=t.NAVY,
+        activebackground=t.YELLOW, activeforeground=t.NAVY,
         font=t.FONT_BOLD, relief="flat", bd=0,
-        highlightthickness=1, highlightbackground=t.BORDER, highlightcolor=t.PRIMARY,
+        highlightthickness=1, highlightbackground=t.PAPER_BORDER, highlightcolor=t.PRIMARY,
         padx=10, pady=6, cursor="hand2", takefocus=True,
     )
     if command is not None:
         trigger.configure(text=title, command=command)
-    trigger.bind("<Enter>", lambda _event: trigger.configure(
-        bg=t.SELECTED, highlightbackground=t.PRIMARY))
-    trigger.bind("<Leave>", lambda _event: trigger.configure(
-        bg=t.HOVER, highlightbackground=t.BORDER))
     if command is None:
         menu = tk.Menu(trigger, tearoff=False, font=("Segoe UI", 10),
-                       bg=t.SURFACE, fg=t.TEXT, activebackground=t.SELECTED,
-                       activeforeground=t.PRIMARY_DARK)
+                       bg=t.SURFACE, fg=t.TEXT, activebackground=t.YELLOW,
+                       activeforeground=t.NAVY)
         trigger.configure(menu=menu)
     icon_name = "folha" if title in {"Folha mensal", "Salários", "Relatórios"} else "admin"
     if title in {"Contas e pagamentos", "Rateios"}:
@@ -46,6 +70,15 @@ def group_actions(parent, title, command=None):
         trigger.pack(side="left", padx=(0, 10), pady=4)
 
     if command is None:
+        for source in sources:
+            if isinstance(source, ttk.Menubutton) and source.cget("menu"):
+                submenu = source.nametowidget(source.cget("menu"))
+                submenu.configure(activebackground=t.YELLOW, activeforeground=t.NAVY)
+                last = submenu.index("end")
+                for index in range(0 if last is None else last + 1):
+                    if submenu.type(index) == "command" and submenu.entrycget(index, "label").lower().startswith("excluir"):
+                        submenu.entryconfigure(index, foreground=t.DANGER, activeforeground=t.DANGER)
+
         def refresh():
             menu.delete(0, "end")
             for source in sources:
@@ -56,8 +89,10 @@ def group_actions(parent, title, command=None):
                 image = source.cget("image")
                 if image:
                     options.update(image=image, compound="left")
-                if source.cget("text").lower().startswith("excluir") and menu.index("end") is not None:
-                    menu.add_separator()
+                if source.cget("text").lower().startswith("excluir"):
+                    if menu.index("end") is not None:
+                        menu.add_separator()
+                    options.update(foreground=t.DANGER, activeforeground=t.DANGER)
                 if isinstance(source, ttk.Menubutton):
                     menu.add_cascade(menu=source.cget("menu"), **options)
                 else:
@@ -87,19 +122,19 @@ class InlineForms:
             self.stack[-1][0].pack_forget()
         else:
             self.hide_content()
-        outer = tk.Frame(self.parent, bg=t.BG)
+        outer = tk.Frame(self.parent, bg=t.PAPER)
         outer.pack(fill="both", expand=True)
         header = tk.Frame(outer, bg=t.SURFACE, padx=16, pady=10)
         header.pack(fill="x")
         back = t.button(header, "← Voltar", lambda: None, kind="secondary")
         back.pack(side="left", padx=(0, 14))
-        title = t.label(header, "", 14, t.PRIMARY_DARK, True)
+        title = t.label(header, "", 14, t.NAVY, True)
         title.pack(side="left")
-        canvas = tk.Canvas(outer, bg=t.BG, bd=0, highlightthickness=0)
+        canvas = tk.Canvas(outer, bg=t.PAPER, bd=0, highlightthickness=0)
         scrollbar = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
         scrollbar.pack(side="right", fill="y")
         canvas.pack(fill="both", expand=True)
-        body = tk.Frame(canvas, bg=t.BG, padx=16, pady=16)
+        body = tk.Frame(canvas, bg=t.PAPER, padx=16, pady=16)
         back.configure(command=body.destroy)
         window = canvas.create_window(0, 0, window=body, anchor="nw")
         canvas.configure(yscrollcommand=scrollbar.set)
